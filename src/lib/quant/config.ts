@@ -2,6 +2,7 @@ import type { AssetType } from "@/types/asset";
 
 export interface QuantConfig {
   targetVolatility: number;
+  currentDecisionLookbackDays: number;
   minDataPoints: number;
   minTradeCount: number;
   limitedSampleTradeCount: number;
@@ -27,6 +28,27 @@ export interface QuantConfig {
   liquidityMinimums: Record<AssetType, number>;
   maxRealizedVolatility: Record<AssetType, number>;
   maxDrawdown: Record<AssetType, number>;
+  dataQuality: {
+    supportedAssetTypes: AssetType[];
+    equityMinDataPoints: number;
+    indicatorWarmupCandles: number;
+    cryptoMinimumTargetCandles: number;
+    maxOutlierCandleRangePct: number;
+    maxOutlierCandleRate: number;
+    maxOutlierCandles: number;
+  };
+  dataHistory: {
+    yahooDefaultRange: "10y" | "max";
+    cryptoLookbackDays: number | "max";
+    cryptoMinimumTargetDays: number;
+    cryptoPageLimit: number;
+    cryptoMaxPages: number;
+  };
+  validation: {
+    minTotalTrades: number;
+    minOutOfSampleTrades: number;
+    minWalkForwardTradesPerWindow: number;
+  };
   signalWeights: {
     trend: number;
     momentum: number;
@@ -43,10 +65,26 @@ export interface QuantConfig {
     walkForward: number;
     parameterSensitivity: number;
   };
+  optimalEntryZone: OptimalEntryZoneConfig;
+}
+
+export interface OptimalEntryZoneConfig {
+  rollingVWAPWindowsDays: number[];
+  pivotLeft: number;
+  pivotRight: number;
+  atrPeriod: number;
+  atrZoneBuffer: number;
+  stopATRBuffer: number;
+  maxVWAPZScoreForLong: number;
+  maxVWAPZScoreForShort: number;
+  minimumRewardRisk: number;
+  actionableScoreThreshold: number;
+  watchlistScoreThreshold: number;
 }
 
 export const DEFAULT_QUANT_CONFIG: QuantConfig = {
   targetVolatility: 0.12,
+  currentDecisionLookbackDays: 365,
   minDataPoints: 252,
   minTradeCount: 30,
   limitedSampleTradeCount: 100,
@@ -87,6 +125,27 @@ export const DEFAULT_QUANT_CONFIG: QuantConfig = {
     etf: -0.25,
     index: -0.22
   },
+  dataQuality: {
+    supportedAssetTypes: ["crypto", "stock", "etf", "index"],
+    equityMinDataPoints: 240,
+    indicatorWarmupCandles: 200,
+    cryptoMinimumTargetCandles: 365 * 5,
+    maxOutlierCandleRangePct: 0.5,
+    maxOutlierCandleRate: 0.02,
+    maxOutlierCandles: 2
+  },
+  dataHistory: {
+    yahooDefaultRange: "max",
+    cryptoLookbackDays: "max",
+    cryptoMinimumTargetDays: 365 * 5,
+    cryptoPageLimit: 1000,
+    cryptoMaxPages: 10
+  },
+  validation: {
+    minTotalTrades: 30,
+    minOutOfSampleTrades: 10,
+    minWalkForwardTradesPerWindow: 3
+  },
   signalWeights: {
     trend: 0.4,
     momentum: 0.35,
@@ -102,6 +161,19 @@ export const DEFAULT_QUANT_CONFIG: QuantConfig = {
     outOfSample: 0.4,
     walkForward: 0.35,
     parameterSensitivity: 0.25
+  },
+  optimalEntryZone: {
+    rollingVWAPWindowsDays: [7, 30, 90],
+    pivotLeft: 3,
+    pivotRight: 3,
+    atrPeriod: 14,
+    atrZoneBuffer: 0.25,
+    stopATRBuffer: 0.1,
+    maxVWAPZScoreForLong: 2,
+    maxVWAPZScoreForShort: -2,
+    minimumRewardRisk: 1.5,
+    actionableScoreThreshold: 75,
+    watchlistScoreThreshold: 60
   }
 };
 

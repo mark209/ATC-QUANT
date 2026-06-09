@@ -15,6 +15,8 @@ import { RiskMetricsTable } from "./RiskMetricsTable";
 import { ScoreCard } from "./ScoreCard";
 import { ScoreBreakdown } from "./ScoreBreakdown";
 import { SignalBreakdown } from "./SignalBreakdown";
+import { MarketScannerPanel } from "./MarketScannerPanel";
+import { OptimalEntryZonePanel } from "./OptimalEntryZonePanel";
 import { generateInvestorReport } from "@/lib/reports/reportGenerator";
 
 interface ApiResponse {
@@ -32,10 +34,17 @@ const defaults: Record<AssetType, string> = {
   index: "^GSPC"
 };
 
-function timeframeLimit(timeframe: Timeframe): number {
-  if (timeframe === "90d") return 90;
-  if (timeframe === "180d") return 180;
-  return 365;
+function timeframeLimit(timeframe: Timeframe): number | null {
+  if (timeframe === "1y") return 365;
+  if (timeframe === "3y") return 365 * 3;
+  if (timeframe === "5y") return 365 * 5;
+  if (timeframe === "10y") return 365 * 10;
+  return null;
+}
+
+function timeframeLabel(timeframe: Timeframe): string {
+  if (timeframe === "max") return "Max";
+  return timeframe.toUpperCase();
 }
 
 export function QuantDashboard({ initialData }: { initialData?: ApiResponse }) {
@@ -85,7 +94,7 @@ export function QuantDashboard({ initialData }: { initialData?: ApiResponse }) {
     const limit = timeframeLimit(timeframe);
     return {
       ...data.dataset,
-      prices: data.dataset.prices.slice(-limit)
+      prices: limit === null ? data.dataset.prices : data.dataset.prices.slice(-limit)
     };
   }, [data?.dataset, timeframe]);
 
@@ -98,6 +107,12 @@ export function QuantDashboard({ initialData }: { initialData?: ApiResponse }) {
     setAssetType(nextType);
     setSymbol(defaults[nextType]);
     setSubmittedSymbol(defaults[nextType]);
+  }
+
+  function openScannerCandidate(nextSymbol: string, nextAssetType: AssetType) {
+    setAssetType(nextAssetType);
+    setSymbol(nextSymbol);
+    setSubmittedSymbol(nextSymbol);
   }
 
   function exportReport() {
@@ -151,9 +166,11 @@ export function QuantDashboard({ initialData }: { initialData?: ApiResponse }) {
               onChange={(event) => setTimeframe(event.target.value as Timeframe)}
               className="rounded-lg border border-line bg-[#0d1528] px-3 py-2 text-sm font-semibold text-white outline-none"
             >
-              <option value="90d">90D</option>
-              <option value="180d">180D</option>
               <option value="1y">1Y</option>
+              <option value="3y">3Y</option>
+              <option value="5y">5Y</option>
+              <option value="10y">10Y</option>
+              <option value="max">Max</option>
             </select>
             <select
               value={riskProfile}
@@ -195,13 +212,46 @@ export function QuantDashboard({ initialData }: { initialData?: ApiResponse }) {
 
         {!loading && data?.dataset && data.analysis && visibleDataset && (
           <div className="grid gap-5">
+            {timeframe === "max" && (
+              <section className="rounded-lg border border-amber/30 bg-amber/10 p-4 text-sm leading-6 text-slate-200">
+                Max history is useful for context, but may include structural regime shifts, stock splits, and old market conditions. Current decision uses recent configured lookbacks.
+              </section>
+            )}
+
+            <section className="grid gap-3 rounded-lg border border-line bg-[#090f20]/90 p-4 sm:grid-cols-2 lg:grid-cols-4">
+              <div>
+                <p className="text-xs text-slate-500">Chart range</p>
+                <p className="mt-1 text-sm font-bold text-white">{timeframeLabel(timeframe)}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500">Current signal range</p>
+                <p className="mt-1 text-sm font-bold text-white">{data.analysis.rangeUsage.currentSignal}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500">Backtest range</p>
+                <p className="mt-1 text-sm font-bold text-white">{data.analysis.rangeUsage.backtest}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500">Validation range</p>
+                <p className="mt-1 text-sm font-bold text-white">{data.analysis.rangeUsage.validation}</p>
+              </div>
+            </section>
+
             <div className="grid gap-5 xl:grid-cols-[1.15fr_0.85fr]">
               <AssetOverview overview={data.dataset.overview} />
               <ScoreCard analysis={data.analysis} />
             </div>
 
+            <Panel title="Market Scanner">
+              <MarketScannerPanel riskProfile={riskProfile} onSelectCandidate={openScannerCandidate} />
+            </Panel>
+
             <Panel title="Decision Pipeline">
               <PipelineStatusPanel analysis={data.analysis} />
+            </Panel>
+
+            <Panel title="Optimal Entry Zone">
+              <OptimalEntryZonePanel result={data.analysis.optimalEntryZone} />
             </Panel>
 
             <div className="grid gap-5 xl:grid-cols-[1.4fr_0.6fr]">
@@ -211,7 +261,7 @@ export function QuantDashboard({ initialData }: { initialData?: ApiResponse }) {
               >
                 <PriceChart points={visibleDataset.prices} />
               </Panel>
-              <Panel title="Model Explanation">
+              <Panel title="Explanation">
                 <ExplanationPanel analysis={data.analysis} />
               </Panel>
             </div>
@@ -230,7 +280,7 @@ export function QuantDashboard({ initialData }: { initialData?: ApiResponse }) {
             </div>
 
             <div className="grid gap-5 xl:grid-cols-[0.8fr_1.2fr]">
-              <Panel title="Position Sizing">
+              <Panel title="Sizing Breakdown">
                 <PositionSizingCard sizing={data.analysis.positionSizing} />
               </Panel>
               <Panel title="Drawdown Control">
@@ -239,7 +289,7 @@ export function QuantDashboard({ initialData }: { initialData?: ApiResponse }) {
             </div>
 
             <Panel
-              title="Backtest Summary"
+              title="Backtest Diagnostics"
               action={
                 <button
                   onClick={exportReport}
@@ -250,7 +300,13 @@ export function QuantDashboard({ initialData }: { initialData?: ApiResponse }) {
                 </button>
               }
             >
-              <BacktestPanel backtest={data.analysis.backtest} validation={data.analysis.pipeline.validation} />
+              <BacktestPanel
+                backtest={data.analysis.backtest}
+                allocationAdjustedBacktest={data.analysis.allocationAdjustedBacktest}
+                validation={data.analysis.pipeline.validation}
+                dataQuality={data.analysis.pipeline.dataQuality}
+                entryZoneAblation={data.analysis.entryZoneAblation}
+              />
             </Panel>
 
             <section className="rounded-lg border border-line bg-[#090f20]/90 p-4">

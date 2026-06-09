@@ -21,15 +21,17 @@ function assetClassCap(assetType: AssetType, symbol: string): number {
   return DEFAULT_QUANT_CONFIG.maxEquityAllocation;
 }
 
-function riskProfileMultiplier(profile: RiskProfile): number {
-  if (profile === "conservative") return 0.75;
-  return 1;
-}
-
 function sampleMultiplier(sampleQuality?: SampleQuality): number {
   if (sampleQuality === "Poor") return 0;
   if (sampleQuality === "Limited") return 0.25;
   if (sampleQuality === "Acceptable") return 0.75;
+  return 1;
+}
+
+function tradeCountMultiplier(tradeCount?: number): number {
+  if (typeof tradeCount !== "number") return 1;
+  if (tradeCount < DEFAULT_QUANT_CONFIG.validation.minTotalTrades) return 0;
+  if (tradeCount < DEFAULT_QUANT_CONFIG.limitedSampleTradeCount) return 0.35;
   return 1;
 }
 
@@ -38,14 +40,15 @@ export function fractionalKelly(
   payoffRatio: number,
   assetType: AssetType,
   expectedValueAfterCosts = Number.POSITIVE_INFINITY,
-  sampleQuality?: SampleQuality
+  sampleQuality?: SampleQuality,
+  tradeCount?: number
 ): number {
   if (expectedValueAfterCosts <= 0) return 0;
   if (payoffRatio <= 0) return 0;
   const kelly = winRate - (1 - winRate) / payoffRatio;
   if (kelly <= 0) return 0;
   const fraction = assetType === "crypto" ? DEFAULT_QUANT_CONFIG.cryptoKellyFraction : DEFAULT_QUANT_CONFIG.kellyFraction;
-  return Math.max(0, kelly * fraction * sampleMultiplier(sampleQuality));
+  return Math.max(0, kelly * fraction * sampleMultiplier(sampleQuality) * tradeCountMultiplier(tradeCount));
 }
 
 export function calculatePositionSizing(input: {
@@ -57,21 +60,20 @@ export function calculatePositionSizing(input: {
   payoffRatio: number;
   expectedValueAfterCosts?: number;
   tradeCount?: number;
+  outOfSampleTrades?: number;
   sampleQuality?: SampleQuality;
   riskProfile: RiskProfile;
 }): PositionSizingResult {
   const risk = drawdownRiskMode(input.currentDrawdown, input.assetType);
   const warnings: string[] = [];
-  const volatilityTargetAllocation = Math.min(
-    assetClassCap(input.assetType, input.symbol),
-    input.realizedVolatility <= 0 ? 0 : targetVolatility(input.assetType) / input.realizedVolatility
-  );
+  const volatilityTargetAllocation = input.realizedVolatility <= 0 ? 0 : targetVolatility(input.assetType) / input.realizedVolatility;
   const fractionalKellyAllocation = fractionalKelly(
     input.winRate,
     input.payoffRatio,
     input.assetType,
     input.expectedValueAfterCosts,
-    input.sampleQuality
+    input.sampleQuality,
+    input.tradeCount
   );
   const assetClassMaxAllocation = assetClassCap(input.assetType, input.symbol);
   const drawdownAdjustedAllocation = assetClassMaxAllocation * risk.adjustment;
@@ -79,7 +81,14 @@ export function calculatePositionSizing(input: {
   if ((input.expectedValueAfterCosts ?? 0) <= 0) warnings.push("Kelly allocation is zero because expected value after costs is not positive.");
   if (input.sampleQuality === "Poor") warnings.push("Kelly allocation is zero because the sample size is poor.");
   if (input.sampleQuality === "Limited") warnings.push("Kelly allocation is heavily reduced because the sample size is limited.");
+  if (typeof input.tradeCount === "number" && input.tradeCount < DEFAULT_QUANT_CONFIG.validation.minTotalTrades) {
+    warnings.push("Kelly allocation is zero because total validated trades are below 30.");
+  }
+  if (typeof input.outOfSampleTrades === "number" && input.outOfSampleTrades < DEFAULT_QUANT_CONFIG.validation.minOutOfSampleTrades) {
+    warnings.push("Kelly sizing is limited because out-of-sample evidence is insufficient.");
+  }
   if (risk.adjustment === 0) warnings.push("Final allocation is 0.00% because drawdown regime is Risk-Off.");
+  if (volatilityTargetAllocation < assetClassMaxAllocation) warnings.push("High realized volatility reduced the volatility-targeted allocation.");
 
   const candidates = [
     { label: "volatility targeting", value: volatilityTargetAllocation },
@@ -88,7 +97,7 @@ export function calculatePositionSizing(input: {
     { label: "drawdown control", value: drawdownAdjustedAllocation }
   ];
   const limiting = candidates.reduce((lowest, candidate) => (candidate.value < lowest.value ? candidate : lowest));
-  const finalAllocation = Math.max(0, limiting.value * riskProfileMultiplier(input.riskProfile));
+  const finalAllocation = Math.max(0, limiting.value);
 
   return {
     volatilityTargetAllocation,

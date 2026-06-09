@@ -1,12 +1,15 @@
 import type { QuantAnalysis } from "@/types/quant";
 import { formatPercent } from "./format";
+import { expectedValueStatusLabel } from "./ScoreBreakdown";
 
 export function ScoreCard({ analysis }: { analysis: QuantAnalysis }) {
   const decision = analysis.pipeline.finalDecision;
   const score = decision.finalScore;
+  const rawScore = decision.rawModelScore;
   const ring = `conic-gradient(#35e58b ${score * 3.6}deg, rgba(47,108,255,0.18) 0deg)`;
   const mainReason = decision.primaryReasons[0] ?? analysis.pipeline.explanation.why;
   const mainWarning = decision.warnings[0] ?? analysis.pipeline.hardFilters.warnings[0] ?? "No primary warning from current checks.";
+  const evStatus = expectedValueStatusLabel(analysis.pipeline.expectedValue);
 
   return (
     <div className="panel-frame rounded-lg p-5">
@@ -14,7 +17,7 @@ export function ScoreCard({ analysis }: { analysis: QuantAnalysis }) {
         <div>
           <p className="text-xs font-semibold uppercase tracking-normal text-cyan">Final Decision</p>
           <h1 className="mt-2 text-3xl font-black text-white">{decision.decisionLabel}</h1>
-          <p className="mt-2 text-sm leading-6 text-slate-300">Risk mode: {analysis.investability.riskMode}</p>
+          <p className="mt-2 text-sm leading-6 text-slate-300">Final decision score: {score}/100</p>
         </div>
         <div className="grid h-28 w-28 place-items-center rounded-full p-2" style={{ background: ring }}>
           <div className="grid h-full w-full place-items-center rounded-full bg-[#0a1022]">
@@ -25,9 +28,13 @@ export function ScoreCard({ analysis }: { analysis: QuantAnalysis }) {
           </div>
         </div>
       </div>
-      <div className="mt-5 grid grid-cols-3 gap-3 text-sm">
+      <div className="mt-5 grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
         <div className="rounded-md border border-line bg-white/5 p-3">
-          <p className="text-xs text-slate-400">Allocation</p>
+          <p className="text-xs text-slate-400">Raw model score</p>
+          <p className="mt-1 font-bold text-white">{rawScore}/100</p>
+        </div>
+        <div className="rounded-md border border-line bg-white/5 p-3">
+          <p className="text-xs text-slate-400">Final position size</p>
           <p className="mt-1 font-bold text-white">{formatPercent(decision.finalPositionSize, 2)}</p>
         </div>
         <div className="rounded-md border border-line bg-white/5 p-3">
@@ -36,8 +43,14 @@ export function ScoreCard({ analysis }: { analysis: QuantAnalysis }) {
         </div>
         <div className="rounded-md border border-line bg-white/5 p-3">
           <p className="text-xs text-slate-400">EV status</p>
-          <p className="mt-1 font-bold text-white">{analysis.pipeline.expectedValue.passed ? "Positive" : "Caution"}</p>
+          <p className="mt-1 font-bold text-white">{evStatus}</p>
         </div>
+      </div>
+      <div className="mt-3 rounded-md border border-line bg-white/[0.03] p-3 text-sm text-slate-300">
+        Risk mode: <span className="font-semibold text-white">{analysis.investability.riskMode}</span>
+      </div>
+      <div className="mt-3 rounded-md border border-line bg-white/[0.03] p-3 text-sm leading-6 text-slate-300">
+        {decision.scoreAdjustmentReason}
       </div>
       <div className="mt-4 grid gap-3 text-sm md:grid-cols-2">
         <div className="rounded-md border border-line bg-white/[0.03] p-3">

@@ -2,11 +2,11 @@ import type { AssetType, MarketDataPoint, RiskProfile } from "@/types/asset";
 import type { InvestabilityResult, LayerResult, QuantAnalysis, RiskMetrics, StrategySignal } from "@/types/quant";
 import { averageDollarVolume, boundedScore, DEFAULT_QUANT_CONFIG } from "./config";
 import { calculateDrawdowns } from "./drawdown";
-import { calculateExpectedValue } from "./expectedValue";
+import { calculateExpectedValueFromTrades } from "./expectedValue";
 import { calculateMomentumScore, calculateTrendScore, overextensionPenalty } from "./trend";
 import { calculatePositionSizing } from "./positionSizing";
 import { calculateLogReturns, calculateSimpleReturns, annualizedReturn } from "./returns";
-import { calmarRatio, conditionalValueAtRisk, sharpeRatio, sortinoRatio, valueAtRisk } from "./ratios";
+import { conditionalValueAtRisk, guardedCalmarRatio, guardedSharpeRatio, guardedSortinoRatio, valueAtRisk } from "./ratios";
 import { periodsPerYear, volatilityRegime } from "./riskRegime";
 import { annualizedVolatility, ewmaVolatility } from "./volatility";
 import { runTrendBacktest } from "./backtest";
@@ -18,6 +18,29 @@ import { validateTrendBacktest } from "./validation";
 import { evaluatePortfolioRisk } from "./portfolioRisk";
 import { buildFinalDecision } from "./decisionEngine";
 import { buildDecisionExplanation } from "./explanation";
+import { runEntryZoneAblation } from "./entryZoneAblation";
+import { analyzeOptimalEntryZone } from "./optimalEntryZone";
+
+function deriveMainStrategyDirection(input: {
+  decisionLabel: string;
+  finalPositionSize: number;
+  regimeLabel: string;
+  hardFiltersPassed: boolean;
+  expectedValuePassed: boolean;
+}): "LONG_ELIGIBLE" | "SHORT_ELIGIBLE" | "NOT_TRADABLE" {
+  const longAllowedLabels = ["Strong candidate", "Position allowed", "Small allocation only"];
+  if (
+    longAllowedLabels.includes(input.decisionLabel) &&
+    input.finalPositionSize > 0 &&
+    input.regimeLabel === "Trend Up" &&
+    input.hardFiltersPassed &&
+    input.expectedValuePassed
+  ) {
+    return "LONG_ELIGIBLE";
+  }
+
+  return "NOT_TRADABLE";
+}
 
 function confidence(score: number, points: number): "Low" | "Medium" | "High" {
   if (points < 120) return "Low";
@@ -121,32 +144,36 @@ function layerResult(input: {
 
 export function analyzeMarketData(points: MarketDataPoint[], assetType: AssetType, symbol: string, riskProfile: RiskProfile): QuantAnalysis {
   const config = DEFAULT_QUANT_CONFIG;
-  const prices = points.map((point) => point.close);
+  const decisionPoints = points.slice(-config.currentDecisionLookbackDays);
+  const prices = decisionPoints.map((point) => point.close);
   const simpleReturns = calculateSimpleReturns(prices);
   const logReturns = calculateLogReturns(prices);
   const periods = periodsPerYear(assetType);
   const annualReturn = annualizedReturn(simpleReturns, periods);
   const volatility = annualizedVolatility(logReturns, periods);
   const ewma = ewmaVolatility(logReturns, 0.94, periods);
-  const drawdown = calculateDrawdowns(points.map((point) => ({ date: point.date, value: point.close })));
-  const ev = calculateExpectedValue(simpleReturns, config.feeRate, config.slippageRate, config.spreadRate);
-  const sharpe = sharpeRatio(annualReturn, volatility);
-  const sortino = sortinoRatio(simpleReturns, annualReturn);
-  const calmar = calmarRatio(annualReturn, drawdown.maxDrawdown);
+  const drawdown = calculateDrawdowns(decisionPoints.map((point) => ({ date: point.date, value: point.close })));
+  const sharpe = guardedSharpeRatio(annualReturn, volatility);
+  const sortino = guardedSortinoRatio(simpleReturns, annualReturn, 0, periods);
+  const calmar = guardedCalmarRatio(annualReturn, drawdown.maxDrawdown);
+  const ratioWarnings = [sharpe.warning, sortino.warning, calmar.warning].filter((warning): warning is string => Boolean(warning));
+  const fullBacktest = runTrendBacktest(points, assetType, config.feeRate, config.slippageRate);
+  const ev = calculateExpectedValueFromTrades(fullBacktest.trades);
   const metrics: RiskMetrics = {
     annualizedReturn: annualReturn,
     annualizedVolatility: volatility,
     ewmaVolatility: ewma,
-    sharpeRatio: sharpe,
-    sortinoRatio: sortino,
-    calmarRatio: calmar,
+    sharpeRatio: sharpe.value,
+    sortinoRatio: sortino.value,
+    calmarRatio: calmar.value,
     valueAtRisk95: valueAtRisk(simpleReturns),
     conditionalValueAtRisk95: conditionalValueAtRisk(simpleReturns),
     expectedValue: ev.expectedValueAfterCosts,
     profitFactor: ev.profitFactor,
     maxDrawdown: drawdown.maxDrawdown,
     currentDrawdown: drawdown.currentDrawdown,
-    recoveryTime: drawdown.recoveryTime
+    recoveryTime: drawdown.recoveryTime,
+    ratioWarnings
   };
 
   const dataQuality = validateDataQuality(points, assetType, config);
@@ -158,38 +185,38 @@ export function analyzeMarketData(points: MarketDataPoint[], assetType: AssetTyp
     config
   });
   const riskLayer = calculateRiskLayer({
-    points,
+    points: decisionPoints,
     assetType,
     realizedVolatility: volatility,
     ewmaVolatility: ewma,
     currentDrawdown: drawdown.currentDrawdown,
     maxDrawdown: drawdown.maxDrawdown,
-    sharpeRatio: sharpe,
-    sortinoRatio: sortino,
-    calmarRatio: calmar,
+    sharpeRatio: sharpe.value,
+    sortinoRatio: sortino.value,
+    calmarRatio: calmar.value,
     config
   });
   const hardFilters = evaluateHardFilters(
     {
       dataQuality,
       assetType,
-      averageDollarVolume: averageDollarVolume(points),
+      averageDollarVolume: averageDollarVolume(decisionPoints),
       realizedVolatility: Math.max(volatility, ewma),
       maxDrawdown: drawdown.maxDrawdown,
+      currentDrawdown: drawdown.currentDrawdown,
       expectedValueAfterCosts: ev.expectedValueAfterCosts,
       expectedValuePassed: ev.passed,
       regimeLabel: signalLayer.regimeLabel
     },
     config
   );
-  const validation = validateTrendBacktest(points, assetType, config);
-  const fullBacktest = runTrendBacktest(points, assetType, config.feeRate, config.slippageRate);
+  const validation = validateTrendBacktest(points, assetType, config, { validationRange: "max" });
 
   const trend = calculateTrendScore(prices, assetType);
   const momentum = calculateMomentumScore(prices, assetType);
   const trendMomentum = boundedScore((trend + momentum) / 2 - overextensionPenalty(prices));
   const evScore = expectedValueScore(ev.expectedValueAfterCosts);
-  const riskScore = riskAdjustedScore(sharpe, sortino, calmar);
+  const riskScore = riskAdjustedScore(sharpe.value, sortino.value, calmar.value);
   const volScore = volatilityScore(Math.max(volatility, ewma), assetType);
   const ddScore = drawdownScore(drawdown.maxDrawdown);
   const liqScore = riskLayer.liquidityScore;
@@ -214,9 +241,14 @@ export function analyzeMarketData(points: MarketDataPoint[], assetType: AssetTyp
     winRate: ev.winRate,
     payoffRatio: ev.payoffRatio,
     expectedValueAfterCosts: ev.expectedValueAfterCosts,
-    tradeCount: ev.tradeCount,
+    tradeCount: fullBacktest.totalTrades,
+    outOfSampleTrades: validation.outOfSample.totalTrades,
     sampleQuality: ev.sampleQuality,
     riskProfile
+  });
+  const allocationAdjustedBacktest = runTrendBacktest(points, assetType, config.feeRate, config.slippageRate, 50, 200, {
+    allocation: positionSizing.finalAllocation,
+    assumptionLabel: "Allocation-adjusted backtest"
   });
   const portfolioRisk = evaluatePortfolioRisk(
     {
@@ -237,7 +269,7 @@ export function analyzeMarketData(points: MarketDataPoint[], assetType: AssetTyp
     validationScore: validation.validationScore,
     liquidityScore: riskLayer.liquidityScore,
     finalPositionSize: positionSizing.finalAllocation,
-    riskWarnings: riskLayer.warnings,
+    riskWarnings: [...riskLayer.warnings, ...ratioWarnings],
     validationWarnings: validation.warnings,
     portfolioWarnings: [...portfolioRisk.warnings, ...portfolioRisk.correlatedExposureWarnings],
     primaryReasons: [...signalLayer.reasons],
@@ -251,6 +283,24 @@ export function analyzeMarketData(points: MarketDataPoint[], assetType: AssetTyp
     decision: finalDecision,
     sizing: positionSizing
   });
+  const mainStrategyDirection = deriveMainStrategyDirection({
+    decisionLabel: finalDecision.decisionLabel,
+    finalPositionSize: positionSizing.finalAllocation,
+    regimeLabel: signalLayer.regimeLabel,
+    hardFiltersPassed: hardFilters.passed,
+    expectedValuePassed: ev.passed
+  });
+  const optimalEntryZone = analyzeOptimalEntryZone({
+    symbol,
+    timeframe: "1D",
+    candles: points,
+    mainStrategyDirection,
+    liquidityPassed: riskLayer.liquidityScore >= 50,
+    volatilityPassed: riskLayer.volatilityScore >= 45,
+    expectedValuePassed: ev.passed,
+    config: config.optimalEntryZone
+  });
+  const entryZoneAblation = runEntryZoneAblation(points, assetType, config);
 
   const investability: InvestabilityResult = {
     score: finalDecision.finalScore,
@@ -269,11 +319,18 @@ export function analyzeMarketData(points: MarketDataPoint[], assetType: AssetTyp
   return {
     assetType,
     riskProfile,
+    rangeUsage: {
+      chart: "Selected chart range",
+      currentSignal: `Recent ${config.currentDecisionLookbackDays} daily candles`,
+      backtest: "Full fetched history",
+      validation: validation.range.validationRange
+    },
     riskMetrics: metrics,
     drawdown,
     positionSizing,
     investability,
     backtest: fullBacktest,
+    allocationAdjustedBacktest,
     pipeline: {
       dataQuality,
       hardFilters,
@@ -313,7 +370,7 @@ export function analyzeMarketData(points: MarketDataPoint[], assetType: AssetTyp
         risk: layerResult({
           status: riskLayer.combinedRiskScore >= 65 ? "pass" : riskLayer.combinedRiskScore >= 45 ? "warn" : "fail",
           reason: `Volatility is ${riskLayer.volatilityLabel}; drawdown stress is ${riskLayer.drawdownLabel}.`,
-          warnings: riskLayer.warnings,
+          warnings: [...riskLayer.warnings, ...ratioWarnings],
           rawMetrics: {
             volatilityScore: riskLayer.volatilityScore,
             drawdownScore: riskLayer.drawdownScore,
@@ -328,7 +385,9 @@ export function analyzeMarketData(points: MarketDataPoint[], assetType: AssetTyp
           rawMetrics: {
             inSampleReturn: validation.inSample.totalReturn,
             outOfSampleReturn: validation.outOfSample.totalReturn,
-            walkForwardWindows: validation.walkForward.windowsTested
+            walkForwardWindows: validation.walkForward.windowsTested,
+            totalTrades: fullBacktest.totalTrades,
+            outOfSampleTrades: validation.outOfSample.totalTrades
           },
           score: validation.validationScore
         }),
@@ -353,17 +412,25 @@ export function analyzeMarketData(points: MarketDataPoint[], assetType: AssetTyp
           status: ["Strong candidate", "Position allowed"].includes(finalDecision.decisionLabel) ? "pass" : "warn",
           reason: finalDecision.decisionLabel,
           warnings: finalDecision.warnings,
-          rawMetrics: { legacyWeightedScore },
+          rawMetrics: {
+            rawModelScore: finalDecision.rawModelScore,
+            finalDecisionScore: finalDecision.finalScore,
+            legacyWeightedScore
+          },
           score: finalDecision.finalScore
         })
       }
     },
+    optimalEntryZone,
+    entryZoneAblation,
     assumptions: [
       "Historical simulation only; results are not a forecast or guarantee.",
       "Daily close-to-close data is used for the first version.",
       "Backtest applies a one-bar signal delay proxy through daily trend state changes.",
       "Fees and slippage are included through the central quant configuration.",
-      "Live provider values are used when returned by the upstream source; no mock market values are substituted."
+      "Live provider values are used when returned by the upstream source; no mock market values are substituted.",
+      "Optimal Entry Zone Engine is downstream of the main strategy and cannot create directional eligibility.",
+      "Short entry zones are disabled until the main strategy supports true short eligibility."
     ]
   };
 }

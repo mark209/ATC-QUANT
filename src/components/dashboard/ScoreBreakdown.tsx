@@ -1,5 +1,5 @@
-import type { QuantAnalysis } from "@/types/quant";
-import { formatPercent } from "./format";
+import type { ExpectedValueResult, QuantAnalysis } from "@/types/quant";
+import { formatNumber, formatPercent } from "./format";
 
 function meterColor(score: number): string {
   if (score >= 70) return "bg-mint";
@@ -7,14 +7,32 @@ function meterColor(score: number): string {
   return "bg-danger";
 }
 
+export function expectedValueStatusLabel(ev: ExpectedValueResult): "EV failed" | "EV limited" | "EV passed" {
+  if (ev.expectedValueAfterCosts <= 0) return "EV failed";
+  if (!ev.passed || ev.sampleQuality === "Poor" || ev.sampleQuality === "Limited") return "EV limited";
+  return "EV passed";
+}
+
+function expectedValueStatusReason(ev: ExpectedValueResult): string {
+  if (ev.expectedValueAfterCosts <= 0) return "Expected value after costs is negative.";
+  if (!ev.passed || ev.sampleQuality === "Poor" || ev.sampleQuality === "Limited") {
+    return "Expected value is positive but sample quality limits confidence.";
+  }
+  return "Trade-derived expected value after costs passed.";
+}
+
 export function ScoreBreakdown({ analysis }: { analysis: QuantAnalysis }) {
+  const decision = analysis.pipeline.finalDecision;
   const rows = [
-    ["Signal score", analysis.pipeline.finalDecision.signalScore, "Trend, momentum, and regime"],
-    ["Risk score", analysis.pipeline.finalDecision.riskScore, "Volatility, drawdown, liquidity, diagnostics"],
-    ["Validation score", analysis.pipeline.finalDecision.validationScore, analysis.pipeline.validation.robustnessLabel],
+    ["Raw model score", decision.rawModelScore, "Uncapped score from signal, risk, validation, and liquidity"],
+    ["Final decision score", decision.finalScore, decision.decisionLabel],
+    ["Signal score", decision.signalScore, "Trend, momentum, and regime"],
+    ["Risk score", decision.riskScore, "Volatility, drawdown, liquidity, diagnostics"],
+    ["Validation score", decision.validationScore, analysis.pipeline.validation.robustnessLabel],
     ["Liquidity score", analysis.pipeline.risk.liquidityScore, analysis.pipeline.risk.liquidityLabel]
   ];
   const ev = analysis.pipeline.expectedValue;
+  const evStatus = expectedValueStatusLabel(ev);
 
   return (
     <div className="space-y-4">
@@ -38,10 +56,10 @@ export function ScoreBreakdown({ analysis }: { analysis: QuantAnalysis }) {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <p className="text-sm font-bold text-white">Expected value status</p>
-            <p className="mt-1 text-xs text-slate-400">Includes fees, slippage, spread, and sample-size penalty.</p>
+            <p className="mt-1 text-xs text-slate-400">{expectedValueStatusReason(ev)}</p>
           </div>
           <span className="rounded-md border border-line bg-white/[0.04] px-3 py-2 text-xs font-bold text-slate-100">
-            {ev.sampleQuality} sample
+            {evStatus} | {ev.sampleQuality} sample
           </span>
         </div>
         <div className="mt-4 grid gap-3 sm:grid-cols-3">
@@ -55,7 +73,7 @@ export function ScoreBreakdown({ analysis }: { analysis: QuantAnalysis }) {
           </div>
           <div>
             <p className="text-xs text-slate-400">Profit factor</p>
-            <p className="mt-1 font-bold text-white">{ev.profitFactor.toFixed(2)}</p>
+            <p className="mt-1 font-bold text-white">{formatNumber(ev.profitFactor)}</p>
           </div>
         </div>
       </div>

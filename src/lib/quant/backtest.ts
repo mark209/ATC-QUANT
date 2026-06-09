@@ -1,13 +1,90 @@
-import type { MarketDataPoint } from "@/types/asset";
-import type { BacktestSummary } from "@/types/quant";
+import type { AssetType, MarketDataPoint } from "@/types/asset";
+import type { BacktestSummary, BacktestTrade, DrawdownPoint } from "@/types/quant";
 import { calculateDrawdowns } from "./drawdown";
-import { calculateExpectedValue } from "./expectedValue";
-import { calculateSimpleReturns, annualizedReturn } from "./returns";
-import { calmarRatio, sharpeRatio, sortinoRatio } from "./ratios";
+import { calculateSimpleReturns, annualizedReturn, calculateLogReturns } from "./returns";
+import { guardedCalmarRatio, guardedSharpeRatio, guardedSortinoRatio } from "./ratios";
 import { annualizedVolatility } from "./volatility";
-import { calculateLogReturns } from "./returns";
 import { periodsPerYear } from "./riskRegime";
-import type { AssetType } from "@/types/asset";
+
+const STARTING_EQUITY = 100000;
+
+export interface TrendBacktestOptions {
+  allocation?: number;
+  assumptionLabel?: string;
+}
+
+interface OpenTrade {
+  entryDate: string;
+  entryIndex: number;
+  entryPrice: number;
+  entryRawPrice: number;
+  startingEquity: number;
+  allocationUsed: number;
+  capitalDeployed: number;
+  cashReserve: number;
+  positionSize: number;
+  quantity: number;
+  entryFee: number;
+  entrySlippage: number;
+}
+
+function average(values: number[]): number {
+  if (values.length === 0) return 0;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function trendSignal(closes: number[], endIndex: number, fastWindow: number, slowWindow: number): boolean {
+  const length = endIndex + 1;
+  if (length < slowWindow) return false;
+  const lookback = closes.slice(0, length);
+  const current = closes[endIndex];
+  const fastMa = average(lookback.slice(-fastWindow));
+  const slowMa = average(lookback.slice(-slowWindow));
+  return current >= fastMa && fastMa >= slowMa;
+}
+
+function emptyBacktest(): BacktestSummary {
+  return {
+    assumptionLabel: "100% signal backtest",
+    allocation: 1,
+    totalReturn: 0,
+    annualizedReturn: 0,
+    cagr: 0,
+    annualizedVolatility: 0,
+    sharpeRatio: 0,
+    sortinoRatio: 0,
+    calmarRatio: 0,
+    maxDrawdown: 0,
+    averageDrawdown: 0,
+    recoveryTime: null,
+    winRate: 0,
+    averageWin: 0,
+    averageLoss: 0,
+    payoffRatio: 0,
+    profitFactor: 0,
+    expectedValue: 0,
+    expectancy: 0,
+    numberOfTrades: 0,
+    totalTrades: 0,
+    averageHoldingPeriod: 0,
+    worstLosingStreak: 0,
+    longestLosingStreak: 0,
+    largestSingleLoss: 0,
+    bestTrade: 0,
+    worstTrade: 0,
+    fees: 0,
+    slippage: 0,
+    feesPaid: 0,
+    slippageCostEstimate: 0,
+    turnover: 0,
+    exposureTime: 0,
+    exposureAdjustedReturn: 0,
+    ratioWarnings: [],
+    trades: [],
+    equityCurve: [],
+    drawdownCurve: []
+  };
+}
 
 export function runTrendBacktest(
   points: MarketDataPoint[],
@@ -15,103 +92,204 @@ export function runTrendBacktest(
   fees = 0.001,
   slippage = 0.001,
   fastWindow = 50,
-  slowWindow = 200
+  slowWindow = 200,
+  options: TrendBacktestOptions = {}
 ): BacktestSummary {
+  const allocation = Math.max(0, Math.min(1, options.allocation ?? 1));
+  const assumptionLabel = options.assumptionLabel ?? (allocation === 1 ? "100% signal backtest" : "Allocation-adjusted backtest");
+  if (points.length === 0) return { ...emptyBacktest(), assumptionLabel, allocation };
+
   const closes = points.map((point) => point.close);
-  const simpleReturns = calculateSimpleReturns(closes);
   const periods = periodsPerYear(assetType);
-  let equity = 100000;
-  let exposureDays = 0;
-  let trades = 0;
-  let inMarket = false;
-  let losingStreak = 0;
-  let worstLosingStreak = 0;
+  const trades: BacktestTrade[] = [];
+  const equityCurve: Array<{ date: string; equity: number }> = [];
+  let cash = STARTING_EQUITY;
+  const state: { openTrade: OpenTrade | null } = { openTrade: null };
+  let pendingSignal = false;
   let feesPaid = 0;
   let slippageCostEstimate = 0;
-  let currentHoldingPeriod = 0;
-  const holdingPeriods: number[] = [];
-  const tradeReturns: number[] = [];
-  let activeTradeReturn = 0;
+  let exposureDays = 0;
+  let entries = 0;
 
-  const equityCurve = points.slice(1).map((point, index) => {
-    const lookback = closes.slice(0, index + 1);
-    const fastMa = lookback.length >= fastWindow ? lookback.slice(-fastWindow).reduce((sum, value) => sum + value, 0) / fastWindow : closes[index];
-    const slowMa = lookback.length >= slowWindow ? lookback.slice(-slowWindow).reduce((sum, value) => sum + value, 0) / slowWindow : fastMa;
-    const signal = closes[index] >= fastMa && fastMa >= slowMa;
-    if (signal !== inMarket) {
-      if (inMarket && currentHoldingPeriod > 0) {
-        holdingPeriods.push(currentHoldingPeriod);
-        tradeReturns.push(activeTradeReturn);
-        currentHoldingPeriod = 0;
-        activeTradeReturn = 0;
-      }
-      trades += 1;
-      inMarket = signal;
-      feesPaid += equity * fees;
-      slippageCostEstimate += equity * slippage;
-      equity *= 1 - fees - slippage;
-    }
-    if (signal) {
-      exposureDays += 1;
-      currentHoldingPeriod += 1;
-      activeTradeReturn += simpleReturns[index];
-      equity *= 1 + simpleReturns[index];
-      if (simpleReturns[index] < 0) {
-        losingStreak += 1;
-        worstLosingStreak = Math.max(worstLosingStreak, losingStreak);
-      } else {
-        losingStreak = 0;
-      }
-    }
-    return { date: point.date, equity };
-  });
+  function enter(point: MarketDataPoint, index: number): void {
+    if (allocation <= 0) return;
+    const rawEntryPrice = point.open;
+    const entryPrice = rawEntryPrice * (1 + slippage);
+    const startingEquity = cash;
+    const allocatedCapital = startingEquity * allocation;
+    const cashReserve = Math.max(0, startingEquity - allocatedCapital);
+    const entryFee = allocatedCapital * fees;
+    const investableCash = Math.max(0, allocatedCapital - entryFee);
+    const quantity = entryPrice <= 0 ? 0 : investableCash / entryPrice;
+    const positionSize = quantity * entryPrice;
+    const entrySlippage = quantity * Math.max(0, entryPrice - rawEntryPrice);
 
-  if (inMarket && currentHoldingPeriod > 0) {
-    holdingPeriods.push(currentHoldingPeriod);
-    tradeReturns.push(activeTradeReturn);
+    feesPaid += entryFee;
+    slippageCostEstimate += entrySlippage;
+    entries += 1;
+    state.openTrade = {
+      entryDate: point.date,
+      entryIndex: index,
+      entryPrice,
+      entryRawPrice: rawEntryPrice,
+      startingEquity,
+      allocationUsed: allocation,
+      capitalDeployed: allocatedCapital,
+      cashReserve,
+      positionSize,
+      quantity,
+      entryFee,
+      entrySlippage
+    };
+    cash = Math.max(0, cash - allocatedCapital);
   }
 
-  const strategyReturns = calculateSimpleReturns(equityCurve.map((point) => point.equity));
-  const strategyLogReturns = calculateLogReturns(equityCurve.map((point) => point.equity));
-  const expectedValue = calculateExpectedValue(strategyReturns, fees, slippage);
+  function exit(point: MarketDataPoint, index: number, rawExitPrice: number, exitReason: string): void {
+    const openTrade = state.openTrade;
+    if (!openTrade) return;
+    const exitPrice = rawExitPrice * (1 - slippage);
+    const exitNotional = openTrade.quantity * exitPrice;
+    const grossPnl = exitNotional - openTrade.positionSize;
+    const exitFee = exitNotional * fees;
+    const exitSlippage = openTrade.quantity * Math.max(0, rawExitPrice - exitPrice);
+    const netPnl = grossPnl - openTrade.entryFee - exitFee;
+    const grossReturnPct = openTrade.startingEquity === 0 ? 0 : grossPnl / openTrade.startingEquity;
+    const netReturnPct = openTrade.startingEquity === 0 ? 0 : netPnl / openTrade.startingEquity;
+    const feesForTrade = openTrade.entryFee + exitFee;
+    const slippageForTrade = openTrade.entrySlippage + exitSlippage;
+
+    feesPaid += exitFee;
+    slippageCostEstimate += exitSlippage;
+    trades.push({
+      entryDate: openTrade.entryDate,
+      entryPrice: openTrade.entryPrice,
+      exitDate: point.date,
+      exitPrice,
+      positionSize: openTrade.positionSize,
+      quantity: openTrade.quantity,
+      allocationUsed: openTrade.allocationUsed,
+      capitalDeployed: openTrade.capitalDeployed,
+      cashReserve: openTrade.cashReserve,
+      positionValue: openTrade.positionSize,
+      grossReturnPct,
+      netReturnPct,
+      feesPaid: feesForTrade,
+      slippagePaid: slippageForTrade,
+      fees: feesForTrade,
+      slippage: slippageForTrade,
+      grossPnl,
+      netPnl,
+      returnPct: netReturnPct,
+      holdingPeriod: index - openTrade.entryIndex,
+      exitReason
+    });
+    cash = Math.max(0, cash + exitNotional - exitFee);
+    state.openTrade = null;
+  }
+
+  for (let index = 0; index < points.length; index += 1) {
+    const point = points[index];
+
+    if (index > 0 && pendingSignal !== Boolean(state.openTrade)) {
+      if (pendingSignal) {
+        enter(point, index);
+      } else if (state.openTrade) {
+        exit(point, index, point.open, "Trend exit");
+      }
+    }
+
+    const activeTrade = state.openTrade;
+    if (activeTrade) {
+      exposureDays += 1;
+      equityCurve.push({ date: point.date, equity: cash + activeTrade.quantity * point.close });
+    } else {
+      equityCurve.push({ date: point.date, equity: cash });
+    }
+
+    if (index < points.length - 1) {
+      pendingSignal = trendSignal(closes, index, fastWindow, slowWindow);
+    }
+  }
+
+  if (state.openTrade) {
+    const lastIndex = points.length - 1;
+    const lastPoint = points[lastIndex];
+    exit(lastPoint, lastIndex, lastPoint.close, "End of data");
+    equityCurve[lastIndex] = { date: lastPoint.date, equity: cash };
+  }
+
+  const equityValues = equityCurve.map((point) => point.equity);
+  const strategyReturns = calculateSimpleReturns(equityValues);
+  const strategyLogReturns = calculateLogReturns(equityValues);
   const drawdown = calculateDrawdowns(equityCurve.map((point) => ({ date: point.date, value: point.equity })));
   const cagr = annualizedReturn(strategyReturns, periods);
   const vol = annualizedVolatility(strategyLogReturns, periods);
+  const tradeReturns = trades.map((trade) => trade.returnPct);
+  const winningTrades = trades.filter((trade) => trade.netPnl > 0);
+  const losingTrades = trades.filter((trade) => trade.netPnl < 0);
+  const grossWins = winningTrades.reduce((sum, trade) => sum + trade.netPnl, 0);
+  const grossLosses = Math.abs(losingTrades.reduce((sum, trade) => sum + trade.netPnl, 0));
+  let currentLosingStreak = 0;
+  let longestLosingStreak = 0;
+
+  for (const trade of trades) {
+    if (trade.netPnl < 0) {
+      currentLosingStreak += 1;
+      longestLosingStreak = Math.max(longestLosingStreak, currentLosingStreak);
+    } else {
+      currentLosingStreak = 0;
+    }
+  }
+
+  const finalEquity = equityValues.at(-1) ?? STARTING_EQUITY;
   const exposureTime = exposureDays / Math.max(1, points.length);
+  const averageWin = winningTrades.length === 0 ? 0 : average(winningTrades.map((trade) => trade.returnPct));
+  const averageLoss = losingTrades.length === 0 ? 0 : average(losingTrades.map((trade) => trade.returnPct));
+  const expectancy = tradeReturns.length === 0 ? 0 : average(tradeReturns);
+  const drawdownCurve: DrawdownPoint[] = drawdown.series;
+  const sharpe = guardedSharpeRatio(cagr, vol);
+  const sortino = guardedSortinoRatio(strategyReturns, cagr, 0, periods);
+  const calmar = guardedCalmarRatio(cagr, drawdown.maxDrawdown);
+  const ratioWarnings = [sharpe.warning, sortino.warning, calmar.warning].filter((warning): warning is string => Boolean(warning));
 
   return {
-    totalReturn: equity / 100000 - 1,
+    assumptionLabel,
+    allocation,
+    totalReturn: finalEquity / STARTING_EQUITY - 1,
+    annualizedReturn: cagr,
     cagr,
     annualizedVolatility: vol,
-    sharpeRatio: sharpeRatio(cagr, vol),
-    sortinoRatio: sortinoRatio(strategyReturns, cagr),
-    calmarRatio: calmarRatio(cagr, drawdown.maxDrawdown),
+    sharpeRatio: sharpe.value,
+    sortinoRatio: sortino.value,
+    calmarRatio: calmar.value,
     maxDrawdown: drawdown.maxDrawdown,
     averageDrawdown: drawdown.averageDrawdown,
     recoveryTime: drawdown.recoveryTime,
-    winRate: expectedValue.winRate,
-    averageWin: expectedValue.averageWin,
-    averageLoss: expectedValue.averageLoss,
-    payoffRatio: expectedValue.payoffRatio,
-    profitFactor: expectedValue.profitFactor,
-    expectedValue: expectedValue.expectedValueAfterCosts,
-    expectancy: expectedValue.expectedValueAfterCosts,
-    numberOfTrades: trades,
-    totalTrades: trades,
-    averageHoldingPeriod:
-      holdingPeriods.length === 0 ? 0 : holdingPeriods.reduce((sum, value) => sum + value, 0) / holdingPeriods.length,
-    worstLosingStreak,
-    longestLosingStreak: worstLosingStreak,
-    largestSingleLoss: Math.min(0, ...strategyReturns),
+    winRate: trades.length === 0 ? 0 : winningTrades.length / trades.length,
+    averageWin,
+    averageLoss,
+    payoffRatio: averageLoss === 0 ? 0 : averageWin / Math.abs(averageLoss),
+    profitFactor: grossLosses === 0 ? 0 : grossWins / grossLosses,
+    expectedValue: expectancy,
+    expectancy,
+    numberOfTrades: trades.length,
+    totalTrades: trades.length,
+    averageHoldingPeriod: trades.length === 0 ? 0 : average(trades.map((trade) => trade.holdingPeriod)),
+    worstLosingStreak: longestLosingStreak,
+    longestLosingStreak,
+    largestSingleLoss: Math.min(0, ...tradeReturns),
     bestTrade: tradeReturns.length === 0 ? 0 : Math.max(...tradeReturns),
     worstTrade: tradeReturns.length === 0 ? 0 : Math.min(...tradeReturns),
     fees,
     slippage,
     feesPaid,
     slippageCostEstimate,
-    turnover: trades / Math.max(1, points.length),
+    turnover: entries / Math.max(1, points.length),
     exposureTime,
     exposureAdjustedReturn: exposureTime === 0 ? 0 : cagr / exposureTime,
-    equityCurve
+    ratioWarnings,
+    trades,
+    equityCurve,
+    drawdownCurve
   };
 }

@@ -26,4 +26,22 @@ describe("investability scoring", () => {
     expect(result.investability.classification.length).toBeGreaterThan(0);
     expect(result.backtest.numberOfTrades).toBeGreaterThanOrEqual(0);
   });
+
+  it("derives expected value and Kelly inputs from backtested trades instead of daily asset returns", () => {
+    const result = analyzeMarketData(samplePoints(), "stock", "TEST", "balanced");
+
+    expect(result.pipeline.expectedValue.tradeCount).toBe(result.backtest.trades.length);
+    expect(result.pipeline.expectedValue.tradeCount).not.toBe(259);
+    if (result.pipeline.expectedValue.expectedValueAfterCosts <= 0) {
+      expect(result.pipeline.positionSizing.fractionalKellyAllocation).toBe(0);
+    }
+  });
+
+  it("returns both signal and allocation-adjusted backtests", () => {
+    const result = analyzeMarketData(samplePoints(), "stock", "TEST", "balanced");
+
+    expect(result.backtest.assumptionLabel).toBe("100% signal backtest");
+    expect(result.allocationAdjustedBacktest.assumptionLabel).toBe("Allocation-adjusted backtest");
+    expect(result.allocationAdjustedBacktest.allocation).toBe(result.positionSizing.finalAllocation);
+  });
 });

@@ -2,7 +2,7 @@ export type AssetType = "crypto" | "stock" | "etf" | "index";
 
 export type RiskProfile = "conservative" | "balanced" | "aggressive";
 
-export type Timeframe = "90d" | "180d" | "1y";
+export type Timeframe = "1y" | "3y" | "5y" | "10y" | "max";
 
 export interface MarketDataPoint {
   date: string;
@@ -13,6 +13,10 @@ export interface MarketDataPoint {
   close: number;
   volume: number;
   quoteVolume?: number;
+  rawClose?: number;
+  adjustedClose?: number;
+  closeAdjustmentSource?: "adjusted" | "unadjusted";
+  ohlcAdjustmentSource?: "derived-from-adjusted-close" | "provider-split-adjusted" | "unadjusted";
 }
 
 export interface AssetOverview {

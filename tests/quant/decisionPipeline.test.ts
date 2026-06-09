@@ -49,12 +49,18 @@ describe("quant decision pipeline", () => {
           issues: [],
           warnings: [],
           dataPoints: 260,
-          requiredDataPoints: DEFAULT_QUANT_CONFIG.minDataPoints
+          requiredDataPoints: DEFAULT_QUANT_CONFIG.minDataPoints,
+          totalCandles: 260,
+          usableCandlesAfterWarmup: 60,
+          estimatedTrades: 5,
+          outOfSampleTrades: 2,
+          walkForwardTradesPerWindow: []
         },
         assetType: "stock",
         averageDollarVolume: 500_000,
         realizedVolatility: 0.18,
         maxDrawdown: -0.08,
+        currentDrawdown: -0.02,
         expectedValueAfterCosts: 0.01,
         expectedValuePassed: true,
         regimeLabel: "Trend Up"
@@ -64,6 +70,39 @@ describe("quant decision pipeline", () => {
 
     expect(result.passed).toBe(false);
     expect(result.failedFilters).toContain("Minimum liquidity");
+  });
+
+  it("warns on recovered historical drawdown without hard-blocking a normal current drawdown", () => {
+    const result = evaluateHardFilters(
+      {
+        dataQuality: {
+          passed: true,
+          score: 100,
+          issues: [],
+          warnings: [],
+          dataPoints: 250,
+          requiredDataPoints: DEFAULT_QUANT_CONFIG.dataQuality.equityMinDataPoints,
+          totalCandles: 250,
+          usableCandlesAfterWarmup: 50,
+          estimatedTrades: 4,
+          outOfSampleTrades: 1,
+          walkForwardTradesPerWindow: []
+        },
+        assetType: "stock",
+        averageDollarVolume: 10_000_000,
+        realizedVolatility: 0.22,
+        maxDrawdown: -0.28,
+        currentDrawdown: -0.03,
+        expectedValueAfterCosts: 0.01,
+        expectedValuePassed: true,
+        regimeLabel: "Trend Up"
+      },
+      DEFAULT_QUANT_CONFIG
+    );
+
+    expect(result.passed).toBe(true);
+    expect(result.failedFilters).not.toContain("Maximum drawdown");
+    expect(result.warnings).toContain("Historical max drawdown breached the preferred threshold, but current drawdown stress is not blocking.");
   });
 
   it("penalizes expected value when sample size is poor", () => {
@@ -175,10 +214,33 @@ describe("quant decision pipeline", () => {
     expect(result.decisionLabel).toBe("Position allowed");
   });
 
+  it("caps final score when hard filters block the decision", () => {
+    const result = buildFinalDecision({
+      dataQualityPassed: true,
+      hardFiltersPassed: false,
+      hardFilterBlockingReason: "Minimum liquidity",
+      regimeLabel: "Trend Up",
+      expectedValuePassed: true,
+      signalScore: 96,
+      riskScore: 77,
+      validationScore: 60,
+      liquidityScore: 80,
+      finalPositionSize: 0.05,
+      riskWarnings: [],
+      validationWarnings: [],
+      portfolioWarnings: [],
+      primaryReasons: ["Trend and momentum are positive."],
+      blockingReasons: ["Minimum liquidity"]
+    });
+
+    expect(result.decisionLabel).toBe("Avoid for now");
+    expect(result.finalScore).toBeLessThanOrEqual(44);
+  });
+
   it("returns validation warnings when history is too small for walk-forward testing", () => {
     const result = validateTrendBacktest(samplePoints(120), "stock", DEFAULT_QUANT_CONFIG);
 
-    expect(result.robustnessLabel).toBe("Insufficient sample");
+    expect(result.robustnessLabel).toBe("Insufficient Data");
     expect(result.warnings).toContain("Not enough history for reliable walk-forward validation.");
   });
 });

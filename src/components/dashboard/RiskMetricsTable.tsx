@@ -17,17 +17,26 @@ export function RiskMetricsTable({ metrics }: { metrics: RiskMetrics }) {
   ];
 
   return (
-    <div className="overflow-hidden rounded-lg border border-line">
-      <table className="w-full border-collapse text-sm">
-        <tbody>
-          {rows.map(([label, value]) => (
-            <tr key={label} className="border-b border-line last:border-b-0">
-              <td className="bg-white/[0.03] px-4 py-3 text-slate-400">{label}</td>
-              <td className="px-4 py-3 text-right font-bold text-slate-100">{value}</td>
-            </tr>
+    <div>
+      <div className="overflow-hidden rounded-lg border border-line">
+        <table className="w-full border-collapse text-sm">
+          <tbody>
+            {rows.map(([label, value]) => (
+              <tr key={label} className="border-b border-line last:border-b-0">
+                <td className="bg-white/[0.03] px-4 py-3 text-slate-400">{label}</td>
+                <td className="px-4 py-3 text-right font-bold text-slate-100">{value}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {metrics.ratioWarnings.length > 0 && (
+        <div className="mt-3 rounded-lg border border-amber/30 bg-amber/10 p-3 text-xs leading-5 text-slate-300">
+          {metrics.ratioWarnings.map((warning) => (
+            <p key={warning}>{warning}</p>
           ))}
-        </tbody>
-      </table>
+        </div>
+      )}
     </div>
   );
 }

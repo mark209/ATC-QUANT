@@ -8,6 +8,7 @@ export interface HardFilterInput {
   averageDollarVolume: number;
   realizedVolatility: number;
   maxDrawdown: number;
+  currentDrawdown: number;
   expectedValueAfterCosts: number;
   expectedValuePassed: boolean;
   regimeLabel: RegimeLabel;
@@ -20,7 +21,10 @@ export function evaluateHardFilters(input: HardFilterInput, config: QuantConfig)
   if (!input.dataQuality.passed) failedFilters.push("Data quality");
   if (input.averageDollarVolume < config.liquidityMinimums[input.assetType]) failedFilters.push("Minimum liquidity");
   if (input.realizedVolatility > config.maxRealizedVolatility[input.assetType]) failedFilters.push("Maximum realized volatility");
-  if (input.maxDrawdown < config.maxDrawdown[input.assetType]) failedFilters.push("Maximum drawdown");
+  if (input.currentDrawdown < config.maxDrawdown[input.assetType]) failedFilters.push("Maximum drawdown");
+  if (input.maxDrawdown < config.maxDrawdown[input.assetType] && input.currentDrawdown >= config.maxDrawdown[input.assetType]) {
+    warnings.push("Historical max drawdown breached the preferred threshold, but current drawdown stress is not blocking.");
+  }
   if (!input.expectedValuePassed || input.expectedValueAfterCosts <= 0) failedFilters.push("Expected value after costs");
   if (input.regimeLabel === "Risk-Off") failedFilters.push("Risk-off regime");
   if (input.regimeLabel === "No Data / Avoid") failedFilters.push("No usable regime data");

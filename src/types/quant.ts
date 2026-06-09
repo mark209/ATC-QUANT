@@ -11,6 +11,9 @@ export type DecisionLabel =
   | "Avoid for now"
   | "Risk-off / no trade"
   | "No Data / Avoid";
+export type MainStrategyDirection = "LONG_ELIGIBLE" | "SHORT_ELIGIBLE" | "NOT_TRADABLE";
+export type EntryActionability = "WATCHLIST" | "ACTIONABLE" | "NO_TRADE";
+export type EntrySide = "LONG" | "SHORT" | "NONE";
 
 export interface DrawdownPoint {
   date: string;
@@ -26,7 +29,7 @@ export interface DrawdownStats {
   series: DrawdownPoint[];
 }
 
-export interface ExpectedValueStats {
+export interface ExpectedValueResult {
   expectedValue: number;
   expectedValueAfterCosts: number;
   winRate: number;
@@ -47,6 +50,8 @@ export interface ExpectedValueStats {
   };
 }
 
+export type ExpectedValueStats = ExpectedValueResult;
+
 export interface RiskMetrics {
   annualizedReturn: number;
   annualizedVolatility: number;
@@ -61,6 +66,7 @@ export interface RiskMetrics {
   maxDrawdown: number;
   currentDrawdown: number;
   recoveryTime: number | null;
+  ratioWarnings: string[];
 }
 
 export interface PositionSizingResult {
@@ -97,8 +103,35 @@ export interface InvestabilityResult {
   signals: StrategySignal[];
 }
 
+export interface BacktestTrade {
+  entryDate: string;
+  entryPrice: number;
+  exitDate: string;
+  exitPrice: number;
+  positionSize: number;
+  quantity: number;
+  allocationUsed: number;
+  capitalDeployed: number;
+  cashReserve: number;
+  positionValue: number;
+  grossReturnPct: number;
+  netReturnPct: number;
+  feesPaid: number;
+  slippagePaid: number;
+  fees: number;
+  slippage: number;
+  grossPnl: number;
+  netPnl: number;
+  returnPct: number;
+  holdingPeriod: number;
+  exitReason: string;
+}
+
 export interface BacktestSummary {
+  assumptionLabel: string;
+  allocation: number;
   totalReturn: number;
+  annualizedReturn: number;
   cagr: number;
   annualizedVolatility: number;
   sharpeRatio: number;
@@ -129,7 +162,85 @@ export interface BacktestSummary {
   turnover: number;
   exposureTime: number;
   exposureAdjustedReturn: number;
+  ratioWarnings: string[];
+  trades: BacktestTrade[];
   equityCurve: Array<{ date: string; equity: number }>;
+  drawdownCurve: DrawdownPoint[];
+}
+
+export interface EntryZoneRange {
+  lower: number;
+  upper: number;
+}
+
+export interface EntryTarget {
+  label: string;
+  price: number;
+  rMultiple: number;
+}
+
+export interface OptimalEntryZoneVWAPData {
+  sessionVWAP: number | null;
+  rollingVWAP7D: number | null;
+  rollingVWAP30D: number | null;
+  rollingVWAP90D: number | null;
+  anchoredVWAP: number | null;
+  vwapStdDev: number | null;
+  vwapZScore: number | null;
+  upperBand1: number | null;
+  lowerBand1: number | null;
+  upperBand2: number | null;
+  lowerBand2: number | null;
+}
+
+export interface OptimalEntryZoneRiskData {
+  atr: number | null;
+  stopDistancePercent: number | null;
+  estimatedRewardRisk: number | null;
+}
+
+export interface OptimalEntryZoneResult {
+  symbol: string;
+  timeframe: string;
+  regimeDirection: MainStrategyDirection;
+  actionability: EntryActionability;
+  entrySide: EntrySide;
+  entryQualityScore: number;
+  entryZone: EntryZoneRange | null;
+  currentPrice: number | null;
+  distanceFromEntryZonePercent: number | null;
+  invalidationPrice: number | null;
+  suggestedStop: number | null;
+  targets: EntryTarget[];
+  vwapData: OptimalEntryZoneVWAPData;
+  riskData: OptimalEntryZoneRiskData;
+  explanation: string[];
+  warnings: string[];
+  reasonNoTrade?: string;
+}
+
+export interface EntryZoneAblationCase {
+  label:
+    | "Current system only"
+    | "Current system + session VWAP entry filter"
+    | "Current system + rolling VWAP entry filter"
+    | "Current system + anchored VWAP entry filter"
+    | "Current system + full Optimal Entry Zone Engine";
+  status: "Active" | "Scaffold only / not active";
+  summary: BacktestSummary | null;
+  missedTradeRate: number;
+  averageEntrySlippage: number;
+  feeSensitivity: number;
+  longOnlyPerformance: number;
+  shortOnlyPerformance: number;
+  bullRegimePerformance: number;
+  bearRegimePerformance: number;
+  sidewaysRegimePerformance: number;
+}
+
+export interface EntryZoneAblationResult {
+  cases: EntryZoneAblationCase[];
+  warnings: string[];
 }
 
 export interface LayerResult {
@@ -148,6 +259,13 @@ export interface DataQualityResult {
   warnings: string[];
   dataPoints: number;
   requiredDataPoints: number;
+  totalCandles: number;
+  usableCandlesAfterWarmup: number;
+  estimatedTrades: number;
+  outOfSampleTrades: number;
+  walkForwardTradesPerWindow: number[];
+  dataStartDate?: string;
+  dataEndDate?: string;
 }
 
 export interface HardFilterResult {
@@ -182,9 +300,10 @@ export interface RiskResult {
 export interface WalkForwardResult {
   windowsTested: number;
   stableWindows: number;
+  tradesPerWindow: number[];
   averageOutOfSampleReturn: number;
   averageOutOfSampleDrawdown: number;
-  stabilityLabel: "Stable" | "Mixed" | "Unstable" | "Insufficient sample";
+  stabilityLabel: "Stable" | "Mixed" | "Unstable" | "Insufficient Data" | "Insufficient trades per window";
   warnings: string[];
 }
 
@@ -192,20 +311,35 @@ export interface ParameterSensitivityResult {
   testedParameters: Array<{
     fastWindow: number;
     slowWindow: number;
+  }>;
+  results: BacktestSummary[];
+  metrics: Array<{
+    fastWindow: number;
+    slowWindow: number;
     totalReturn: number;
+    annualizedReturn: number;
     maxDrawdown: number;
     sharpeRatio: number;
+    tradeCount: number;
+    robustnessScore: number;
   }>;
-  sensitivityLabel: "Robust" | "Moderately sensitive" | "Highly sensitive / overfit risk" | "Insufficient sample";
+  rangeLabel: string;
+  robustnessLabel: "Robust" | "Moderately Sensitive" | "Highly Sensitive / Overfit Risk" | "Insufficient Data";
+  sensitivityLabel: "Robust" | "Moderately Sensitive" | "Highly Sensitive / Overfit Risk" | "Insufficient Data";
   warnings: string[];
 }
 
 export interface BacktestValidationResult {
   inSample: BacktestSummary;
   outOfSample: BacktestSummary;
+  outOfSampleLabel: "Reliable" | "Inconclusive" | "Insufficient Data";
   walkForward: WalkForwardResult;
   parameterSensitivity: ParameterSensitivityResult;
-  robustnessLabel: string;
+  range: {
+    validationRange: string;
+    minimumOutOfSampleTrades: number;
+  };
+  robustnessLabel: "Robust" | "Moderate" | "Unstable" | "Insufficient Data";
   validationScore: number;
   warnings: string[];
 }
@@ -228,7 +362,9 @@ export interface PortfolioRiskResult {
 
 export interface FinalDecisionResult {
   decisionLabel: DecisionLabel;
+  rawModelScore: number;
   finalScore: number;
+  scoreAdjustmentReason: string;
   signalScore: number;
   riskScore: number;
   validationScore: number;
@@ -268,11 +404,20 @@ export interface QuantDecisionPipeline {
 export interface QuantAnalysis {
   assetType: AssetType;
   riskProfile: RiskProfile;
+  rangeUsage: {
+    chart: string;
+    currentSignal: string;
+    backtest: string;
+    validation: string;
+  };
   riskMetrics: RiskMetrics;
   drawdown: DrawdownStats;
   positionSizing: PositionSizingResult;
   investability: InvestabilityResult;
   backtest: BacktestSummary;
+  allocationAdjustedBacktest: BacktestSummary;
   pipeline: QuantDecisionPipeline;
+  optimalEntryZone: OptimalEntryZoneResult;
+  entryZoneAblation: EntryZoneAblationResult;
   assumptions: string[];
 }
