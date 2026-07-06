@@ -1,0 +1,24 @@
+{
+  "policyName": "frozen_floor_0_10",
+  "policyVersion": "2026-07-06.floor_0_10.v1",
+  "allocationFloor": 0.001,
+  "dateFrozen": "2026-07-06",
+  "sourceReport": "ATC_SHADOW_ALLOCATION_EXPERIMENT_REPORT.md",
+  "ruleSummary": "Apply a 0.10% paper-only shadow allocation floor only when the existing strict shadow safety gates pass. This does not alter production allocation.",
+  "safetyRestrictions": [
+    "Paper-only tracking; no broker execution.",
+    "Production allocation remains unchanged.",
+    "Risk-off rows remain blocked unless production already carried allocation.",
+    "Failed Evidence and No Evidence rows remain blocked from the shadow floor.",
+    "EV must be positive, data quality must pass, and signal confidence must be at least 60.",
+    "No parameter changes are allowed during the forward evidence window."
+  ],
+  "costAssumptions": [
+    { "name": "no cost", "costPerUnitAllocation": 0 },
+    { "name": "low cost", "costPerUnitAllocation": 0.001 },
+    { "name": "medium cost", "costPerUnitAllocation": 0.004 },
+    { "name": "high cost", "costPerUnitAllocation": 0.008 }
+  ],
+  "productionStatus": "paper-only",
+  "productionPromotionStatus": "not approved"
+}
