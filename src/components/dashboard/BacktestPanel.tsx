@@ -141,7 +141,8 @@ export function BacktestPanel({
               <div>
                 <p className="text-sm font-bold text-white">Validation diagnostic</p>
                 <p className="mt-1 text-xs text-slate-400">
-                  {validation.parameterSensitivity.robustnessLabel} | Range {validation.parameterSensitivity.rangeLabel} | Not a full train/test optimizer
+                  Evidence: {validation.validationEvidenceState} | Robustness: {validation.robustnessLabel} | Range{" "}
+                  {validation.parameterSensitivity.rangeLabel} | Not a full train/test optimizer
                 </p>
               </div>
               <p className="text-sm font-bold text-white">Validation diagnostic score {validation.validationScore}/100</p>
@@ -170,8 +171,8 @@ export function BacktestPanel({
           </div>
           {validation.warnings.length > 0 && (
             <div className="rounded-lg border border-amber/30 bg-amber/10 p-4 text-xs leading-5 text-slate-300 lg:col-span-3">
-              {validation.warnings.map((warning) => (
-                <p key={warning}>{warning}</p>
+              {validation.warnings.map((warning, index) => (
+                <p key={`validation-warning-${index}-${warning}`}>{warning}</p>
               ))}
             </div>
           )}
@@ -207,8 +208,8 @@ export function BacktestPanel({
           </div>
           {entryZoneAblation.warnings.length > 0 && (
             <div className="mt-4 grid gap-2 text-xs leading-5 text-slate-500">
-              {entryZoneAblation.warnings.map((warning) => (
-                <p key={warning}>{warning}</p>
+              {entryZoneAblation.warnings.map((warning, index) => (
+                <p key={`entry-zone-ablation-warning-${index}-${warning}`}>{warning}</p>
               ))}
             </div>
           )}

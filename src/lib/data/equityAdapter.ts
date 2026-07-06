@@ -64,7 +64,7 @@ function normalizeEquitySymbol(rawSymbol: string, assetType: AssetType): string 
 }
 
 export interface EquityHistoryOptions {
-  range?: "10y" | "max";
+  range?: "1y" | "3y" | "5y" | "10y" | "max";
 }
 
 async function fetchYahooChart(symbol: string, options: EquityHistoryOptions = {}): Promise<YahooChartResponse> {

@@ -18,6 +18,7 @@ import { SignalBreakdown } from "./SignalBreakdown";
 import { MarketScannerPanel } from "./MarketScannerPanel";
 import { OptimalEntryZonePanel } from "./OptimalEntryZonePanel";
 import { generateInvestorReport } from "@/lib/reports/reportGenerator";
+import { HistoricalReplayPanel } from "./HistoricalReplayPanel";
 
 interface ApiResponse {
   live: boolean;
@@ -237,6 +238,66 @@ export function QuantDashboard({ initialData }: { initialData?: ApiResponse }) {
               </div>
             </section>
 
+            {(data.analysis.dataRanges ?? data.dataset.dataRanges) && (
+              <section className="rounded-lg border border-line bg-[#090f20]/90 p-4">
+                {(() => {
+                  const ranges = data.analysis?.dataRanges ?? data.dataset?.dataRanges;
+                  if (!ranges) return null;
+                  return (
+                    <>
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-bold text-slate-100">Data Integrity</p>
+                          <p className="mt-1 text-xs leading-5 text-slate-500">
+                            Chart requested: {ranges.chartRangeRequested}. Engine range: {ranges.engineRangeUsed} daily,{" "}
+                            {ranges.engineCandles.length.toLocaleString()} candles.
+                          </p>
+                        </div>
+                        <span className="rounded-md border border-line bg-white/[0.04] px-3 py-2 text-xs font-bold text-slate-100">
+                          Fallback used: {ranges.fallbackUsed ? "Yes" : "No"}
+                        </span>
+                      </div>
+                      {ranges.fallbackReason && <p className="mt-3 text-xs leading-5 text-amber">{ranges.fallbackReason}</p>}
+                      <div className="mt-4 grid gap-3 text-xs sm:grid-cols-2 lg:grid-cols-5">
+                        <div>
+                          <p className="text-slate-500">Chart used</p>
+                          <p className="mt-1 font-bold text-white">
+                            {ranges.chartDataRangeUsed} / {ranges.chartCandles.length.toLocaleString()}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-slate-500">Backtest used</p>
+                          <p className="mt-1 font-bold text-white">
+                            {ranges.backtestRangeUsed} / {ranges.backtestCandles.length.toLocaleString()}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-slate-500">Validation used</p>
+                          <p className="mt-1 font-bold text-white">
+                            {ranges.validationRangeUsed} / {ranges.validationCandles.length.toLocaleString()}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-slate-500">Density</p>
+                          <p className="mt-1 font-bold text-white">{ranges.density.engine.isSparse ? "Sparse" : "Dense"}</p>
+                        </div>
+                        <div>
+                          <p className="text-slate-500">Latest stale</p>
+                          <p className="mt-1 font-bold text-white">{ranges.density.engine.isStale ? "Yes" : "No"}</p>
+                        </div>
+                      </div>
+                      {ranges.density.engine.gapCount > 0 && (
+                        <p className="mt-3 text-xs leading-5 text-slate-500">
+                          Engine gap warning: {ranges.density.engine.gapCount} gaps detected; largest gap{" "}
+                          {ranges.density.engine.largestGapDays.toFixed(1)} days.
+                        </p>
+                      )}
+                    </>
+                  );
+                })()}
+              </section>
+            )}
+
             <div className="grid gap-5 xl:grid-cols-[1.15fr_0.85fr]">
               <AssetOverview overview={data.dataset.overview} />
               <ScoreCard analysis={data.analysis} />
@@ -309,14 +370,18 @@ export function QuantDashboard({ initialData }: { initialData?: ApiResponse }) {
               />
             </Panel>
 
+            <Panel title="Historical Paper Replay">
+              <HistoricalReplayPanel dataset={data.dataset} analysis={data.analysis} />
+            </Panel>
+
             <section className="rounded-lg border border-line bg-[#090f20]/90 p-4">
               <div className="flex items-start gap-3">
                 <BarChart3 className="mt-1 text-cyan" size={20} />
                 <div>
                   <p className="text-sm font-bold text-slate-100">Backtest assumptions</p>
                   <div className="mt-2 grid gap-2 text-xs leading-5 text-slate-500 md:grid-cols-2">
-                    {data.analysis.assumptions.map((assumption) => (
-                      <p key={assumption}>{assumption}</p>
+                    {data.analysis.assumptions.map((assumption, index) => (
+                      <p key={`assumption-${index}-${assumption}`}>{assumption}</p>
                     ))}
                   </div>
                 </div>

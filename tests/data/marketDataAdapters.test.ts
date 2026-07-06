@@ -1,6 +1,58 @@
 import { describe, expect, it, vi } from "vitest";
 import { fetchBinanceMarketData } from "@/lib/data/binanceAdapter";
 import { fetchEquityMarketData } from "@/lib/data/equityAdapter";
+import { fetchMarketDataWithFallback } from "@/lib/data/marketDataAdapter";
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function yahooPayload(symbol: string, timestamps: number[], options: { adjusted?: boolean } = {}) {
+  const adjusted = options.adjusted ?? true;
+  return {
+    chart: {
+      result: [
+        {
+          meta: {
+            symbol,
+            longName: symbol,
+            exchangeName: "Test Exchange",
+            regularMarketPrice: 100,
+            previousClose: 99,
+            regularMarketTime: Math.floor(timestamps.at(-1)! / 1000)
+          },
+          timestamp: timestamps.map((timestamp) => Math.floor(timestamp / 1000)),
+          indicators: {
+            quote: [
+              {
+                open: timestamps.map((_, index) => 90 + index * 0.01),
+                high: timestamps.map((_, index) => 101 + index * 0.01),
+                low: timestamps.map((_, index) => 89 + index * 0.01),
+                close: timestamps.map((_, index) => 100 + index * 0.01),
+                volume: timestamps.map(() => 1000000)
+              }
+            ],
+            ...(adjusted
+              ? {
+                  adjclose: [
+                    {
+                      adjclose: timestamps.map((_, index) => 100 + index * 0.01)
+                    }
+                  ]
+                }
+              : {})
+          }
+        }
+      ]
+    }
+  };
+}
+
+function dailyTimestamps(count: number, start = Date.UTC(2016, 0, 1)): number[] {
+  return Array.from({ length: count }, (_, index) => start + index * DAY_MS);
+}
+
+function quarterlyTimestamps(count: number, start = Date.UTC(1984, 11, 1)): number[] {
+  return Array.from({ length: count }, (_, index) => start + index * DAY_MS * 91);
+}
 
 describe("market data adapters", () => {
   it("requests max daily equity history by default for validation", async () => {
@@ -196,6 +248,52 @@ describe("market data adapters", () => {
     expect(cryptoUrl).toContain("interval=1d");
     const nextCryptoUrl = String((fetchMock.mock.calls as unknown as Array<[string]>)[1][0]);
     expect(nextCryptoUrl).toContain("startTime=");
+    vi.unstubAllGlobals();
+  });
+
+  it("detects sparse max stock data and falls back to dense 10y data for engine ranges", async () => {
+    const sparseMax = quarterlyTimestamps(168);
+    const denseTenYear = dailyTimestamps(2514);
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => yahooPayload("AAPL", sparseMax) })
+      .mockResolvedValueOnce({ ok: true, json: async () => yahooPayload("AAPL", denseTenYear) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await fetchMarketDataWithFallback({ symbol: "AAPL", assetType: "stock", chartRangeRequested: "max" });
+
+    expect(result.chartCandles).toHaveLength(168);
+    expect(result.engineCandles).toHaveLength(2514);
+    expect(result.backtestCandles).toHaveLength(2514);
+    expect(result.validationCandles).toHaveLength(2514);
+    expect(result.chartDataRangeUsed).toBe("max");
+    expect(result.engineRangeUsed).toBe("10y");
+    expect(result.fallbackUsed).toBe(true);
+    expect(result.fallbackReason).toContain("Chart range max was sparse");
+    expect(result.density.chart.isSparse).toBe(true);
+    expect(result.density.engine.isSparse).toBe(false);
+    vi.unstubAllGlobals();
+  });
+
+  it("detects sparse max ETF data and falls back through preferred dense ranges", async () => {
+    const sparseMax = quarterlyTimestamps(168);
+    const sparseTenYear = dailyTimestamps(180);
+    const denseFiveYear = dailyTimestamps(1260);
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => yahooPayload("SPY", sparseMax) })
+      .mockResolvedValueOnce({ ok: true, json: async () => yahooPayload("SPY", sparseTenYear) })
+      .mockResolvedValueOnce({ ok: true, json: async () => yahooPayload("SPY", denseFiveYear) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await fetchMarketDataWithFallback({ symbol: "SPY", assetType: "etf", chartRangeRequested: "max" });
+
+    expect(result.chartCandles).toHaveLength(168);
+    expect(result.engineRangeUsed).toBe("5y");
+    expect(result.engineCandles).toHaveLength(1260);
+    expect(result.fallbackUsed).toBe(true);
+    expect(result.density.chart.isSparse).toBe(true);
+    expect(result.density.engine.isSparse).toBe(false);
     vi.unstubAllGlobals();
   });
 });

@@ -37,34 +37,36 @@ describe("backtest validation", () => {
     expect(result.warnings).toContain("Insufficient data for reliable out-of-sample and walk-forward validation.");
   });
 
-  it("labels validation as insufficient sample when total trades are below minimum", () => {
+  it("labels validation as weak evidence when total trades are below the target but usable", () => {
     const result = validateTrendBacktest(samplePoints(300), "stock", DEFAULT_QUANT_CONFIG);
 
     expect(result.inSample.totalTrades + result.outOfSample.totalTrades).toBeLessThan(DEFAULT_QUANT_CONFIG.minTradeCount);
-    expect(result.robustnessLabel).toBe("Insufficient Data");
-    expect(result.validationScore).toBeLessThanOrEqual(40);
-    expect(result.warnings).toContain("Total trades are below 30; validation is an insufficient sample.");
+    expect(["No Evidence", "Weak Evidence"]).toContain(result.validationEvidenceState);
+    expect(result.validationScore).toBeLessThanOrEqual(44);
+    expect(result.warnings).toContain("Low trade count reduces confidence.");
   });
 
-  it("labels out-of-sample validation as insufficient data when there are too few trades", () => {
+  it("labels low-but-nonzero out-of-sample validation as inconclusive evidence", () => {
     const result = validateTrendBacktest(samplePoints(700), "stock", DEFAULT_QUANT_CONFIG);
 
     if (result.outOfSample.totalTrades < result.range.minimumOutOfSampleTrades) {
-      expect(result.outOfSampleLabel).toBe("Insufficient Data");
+      expect(result.outOfSampleLabel).toBe(result.outOfSample.totalTrades === 0 ? "Insufficient Data" : "Inconclusive");
       expect(result.warnings).toContain(
-        `Out-of-sample trade count is below the ${result.range.minimumOutOfSampleTrades}-trade minimum for ${result.range.validationRange} validation.`
+        result.outOfSample.totalTrades === 0
+          ? `Out-of-sample trade count is zero for ${result.range.validationRange} validation.`
+          : `Out-of-sample trade count is below the ${result.range.minimumOutOfSampleTrades}-trade target for ${result.range.validationRange} validation.`
       );
     }
   });
 
-  it("uses range-specific minimum OOS trade counts and labels low-trade validation as insufficient data", () => {
+  it("uses range-specific minimum OOS trade counts and preserves graded evidence", () => {
     const result = validateTrendBacktest(samplePoints(700), "stock", DEFAULT_QUANT_CONFIG, { validationRange: "max" });
 
     expect(result.range.minimumOutOfSampleTrades).toBeGreaterThan(DEFAULT_QUANT_CONFIG.validation.minOutOfSampleTrades);
     if (result.outOfSample.totalTrades < result.range.minimumOutOfSampleTrades) {
-      expect(result.outOfSampleLabel).toBe("Insufficient Data");
-      expect(result.robustnessLabel).toBe("Insufficient Data");
-      expect(result.validationScore).toBeLessThanOrEqual(40);
+      expect(result.outOfSampleLabel).toBe(result.outOfSample.totalTrades === 0 ? "Insufficient Data" : "Inconclusive");
+      expect(["No Evidence", "Weak Evidence", "Moderate Evidence"]).toContain(result.validationEvidenceState);
+      expect(result.validationScore).toBeLessThanOrEqual(65);
     }
   });
 

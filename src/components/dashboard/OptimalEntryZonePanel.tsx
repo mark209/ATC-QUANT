@@ -112,15 +112,15 @@ export function OptimalEntryZonePanel({ result }: { result: OptimalEntryZoneResu
         <div className="rounded-lg border border-line bg-white/[0.03] p-4">
           <p className="text-sm font-bold text-white">Execution notes</p>
           <div className="mt-3 grid gap-2 text-xs leading-5 text-slate-400">
-            {result.explanation.map((item) => (
-              <p key={item}>{item}</p>
+            {result.explanation.map((item, index) => (
+              <p key={`entry-explanation-${index}-${item}`}>{item}</p>
             ))}
             {result.reasonNoTrade && <p>No trade: {result.reasonNoTrade}</p>}
           </div>
           {result.warnings.length > 0 && (
             <div className="mt-4 rounded-md border border-amber/30 bg-amber/10 p-3 text-xs leading-5 text-amber">
-              {result.warnings.slice(0, 5).map((warning) => (
-                <p key={warning}>{warning}</p>
+              {result.warnings.slice(0, 5).map((warning, index) => (
+                <p key={`entry-warning-${index}-${warning}`}>{warning}</p>
               ))}
             </div>
           )}

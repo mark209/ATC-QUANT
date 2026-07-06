@@ -21,6 +21,23 @@ import { buildDecisionExplanation } from "./explanation";
 import { runEntryZoneAblation } from "./entryZoneAblation";
 import { analyzeOptimalEntryZone } from "./optimalEntryZone";
 
+export interface AnalysisRangeOptions {
+  chartCandles?: MarketDataPoint[];
+  engineCandles?: MarketDataPoint[];
+  backtestCandles?: MarketDataPoint[];
+  validationCandles?: MarketDataPoint[];
+  dataRangeResult?: import("@/types/asset").DataFetchResult;
+  rangeMetadata?: {
+    chartRangeRequested: string;
+    chartDataRangeUsed: string;
+    engineRangeUsed: string;
+    backtestRangeUsed: string;
+    validationRangeUsed: string;
+    fallbackUsed: boolean;
+    fallbackReason?: string;
+  };
+}
+
 function deriveMainStrategyDirection(input: {
   decisionLabel: string;
   finalPositionSize: number;
@@ -142,9 +159,22 @@ function layerResult(input: {
   };
 }
 
-export function analyzeMarketData(points: MarketDataPoint[], assetType: AssetType, symbol: string, riskProfile: RiskProfile): QuantAnalysis {
+function displayRange(range: string): string {
+  return range === "max" ? "Max" : range;
+}
+
+export function analyzeMarketData(
+  points: MarketDataPoint[],
+  assetType: AssetType,
+  symbol: string,
+  riskProfile: RiskProfile,
+  rangeOptions: AnalysisRangeOptions = {}
+): QuantAnalysis {
   const config = DEFAULT_QUANT_CONFIG;
-  const decisionPoints = points.slice(-config.currentDecisionLookbackDays);
+  const engineCandles = rangeOptions.engineCandles ?? points;
+  const backtestCandles = rangeOptions.backtestCandles ?? engineCandles;
+  const validationCandles = rangeOptions.validationCandles ?? backtestCandles;
+  const decisionPoints = engineCandles.slice(-config.currentDecisionLookbackDays);
   const prices = decisionPoints.map((point) => point.close);
   const simpleReturns = calculateSimpleReturns(prices);
   const logReturns = calculateLogReturns(prices);
@@ -157,7 +187,7 @@ export function analyzeMarketData(points: MarketDataPoint[], assetType: AssetTyp
   const sortino = guardedSortinoRatio(simpleReturns, annualReturn, 0, periods);
   const calmar = guardedCalmarRatio(annualReturn, drawdown.maxDrawdown);
   const ratioWarnings = [sharpe.warning, sortino.warning, calmar.warning].filter((warning): warning is string => Boolean(warning));
-  const fullBacktest = runTrendBacktest(points, assetType, config.feeRate, config.slippageRate);
+  const fullBacktest = runTrendBacktest(backtestCandles, assetType, config.feeRate, config.slippageRate);
   const ev = calculateExpectedValueFromTrades(fullBacktest.trades);
   const metrics: RiskMetrics = {
     annualizedReturn: annualReturn,
@@ -176,7 +206,10 @@ export function analyzeMarketData(points: MarketDataPoint[], assetType: AssetTyp
     ratioWarnings
   };
 
-  const dataQuality = validateDataQuality(points, assetType, config);
+  const dataQuality = validateDataQuality(engineCandles, assetType, config);
+  if (rangeOptions.rangeMetadata?.fallbackReason && !dataQuality.warnings.includes(rangeOptions.rangeMetadata.fallbackReason)) {
+    dataQuality.warnings.push(rangeOptions.rangeMetadata.fallbackReason);
+  }
   const signalLayer = calculateSignalLayer({
     prices,
     realizedVolatility: Math.max(volatility, ewma),
@@ -210,7 +243,9 @@ export function analyzeMarketData(points: MarketDataPoint[], assetType: AssetTyp
     },
     config
   );
-  const validation = validateTrendBacktest(points, assetType, config, { validationRange: "max" });
+  const validation = validateTrendBacktest(validationCandles, assetType, config, {
+    validationRange: (rangeOptions.rangeMetadata?.validationRangeUsed ?? "max") as "1y" | "3y" | "5y" | "10y" | "max"
+  });
 
   const trend = calculateTrendScore(prices, assetType);
   const momentum = calculateMomentumScore(prices, assetType);
@@ -246,10 +281,6 @@ export function analyzeMarketData(points: MarketDataPoint[], assetType: AssetTyp
     sampleQuality: ev.sampleQuality,
     riskProfile
   });
-  const allocationAdjustedBacktest = runTrendBacktest(points, assetType, config.feeRate, config.slippageRate, 50, 200, {
-    allocation: positionSizing.finalAllocation,
-    assumptionLabel: "Allocation-adjusted backtest"
-  });
   const portfolioRisk = evaluatePortfolioRisk(
     {
       candidateSymbol: symbol,
@@ -267,6 +298,7 @@ export function analyzeMarketData(points: MarketDataPoint[], assetType: AssetTyp
     signalScore: signalLayer.combinedSignalScore,
     riskScore: riskLayer.combinedRiskScore,
     validationScore: validation.validationScore,
+    validationEvidenceState: validation.validationEvidenceState,
     liquidityScore: riskLayer.liquidityScore,
     finalPositionSize: positionSizing.finalAllocation,
     riskWarnings: [...riskLayer.warnings, ...ratioWarnings],
@@ -275,17 +307,35 @@ export function analyzeMarketData(points: MarketDataPoint[], assetType: AssetTyp
     primaryReasons: [...signalLayer.reasons],
     blockingReasons: hardFilters.failedFilters
   });
+  const activePositionSizing =
+    finalDecision.finalPositionSize === positionSizing.finalPositionSize
+      ? positionSizing
+      : {
+          ...positionSizing,
+          finalAllocation: finalDecision.finalPositionSize,
+          finalPositionSize: finalDecision.finalPositionSize,
+          warnings: Array.from(
+            new Set([
+              ...positionSizing.warnings,
+              `Active allocation is zero because the final decision is ${finalDecision.decisionLabel}.`
+            ])
+          )
+        };
+  const allocationAdjustedBacktest = runTrendBacktest(backtestCandles, assetType, config.feeRate, config.slippageRate, 50, 200, {
+    allocation: finalDecision.finalPositionSize,
+    assumptionLabel: "Allocation-adjusted backtest"
+  });
   const explanation = buildDecisionExplanation({
     symbol,
     signal: signalLayer,
     risk: riskLayer,
     hardFilters,
     decision: finalDecision,
-    sizing: positionSizing
+    sizing: activePositionSizing
   });
   const mainStrategyDirection = deriveMainStrategyDirection({
     decisionLabel: finalDecision.decisionLabel,
-    finalPositionSize: positionSizing.finalAllocation,
+    finalPositionSize: finalDecision.finalPositionSize,
     regimeLabel: signalLayer.regimeLabel,
     hardFiltersPassed: hardFilters.passed,
     expectedValuePassed: ev.passed
@@ -293,20 +343,33 @@ export function analyzeMarketData(points: MarketDataPoint[], assetType: AssetTyp
   const optimalEntryZone = analyzeOptimalEntryZone({
     symbol,
     timeframe: "1D",
-    candles: points,
+    candles: engineCandles,
     mainStrategyDirection,
     liquidityPassed: riskLayer.liquidityScore >= 50,
     volatilityPassed: riskLayer.volatilityScore >= 45,
     expectedValuePassed: ev.passed,
     config: config.optimalEntryZone
   });
-  const entryZoneAblation = runEntryZoneAblation(points, assetType, config);
+  const entryZoneAblation = runEntryZoneAblation(backtestCandles, assetType, config);
+  const rangeUsage = rangeOptions.rangeMetadata
+    ? {
+        chart: displayRange(rangeOptions.rangeMetadata.chartRangeRequested),
+        currentSignal: `${displayRange(rangeOptions.rangeMetadata.engineRangeUsed)} daily engine data (${engineCandles.length} candles)`,
+        backtest: `${displayRange(rangeOptions.rangeMetadata.backtestRangeUsed)} daily backtest data (${backtestCandles.length} candles)`,
+        validation: `${displayRange(rangeOptions.rangeMetadata.validationRangeUsed)} daily validation data (${validationCandles.length} candles)`
+      }
+    : {
+        chart: "Selected chart range",
+        currentSignal: `Recent ${config.currentDecisionLookbackDays} daily candles`,
+        backtest: "Full fetched history",
+        validation: validation.range.validationRange
+      };
 
   const investability: InvestabilityResult = {
     score: finalDecision.finalScore,
     classification: finalDecision.decisionLabel,
-    confidence: confidence(finalDecision.finalScore, points.length),
-    riskMode: positionSizing.riskMode,
+    confidence: confidence(finalDecision.finalScore, engineCandles.length),
+    riskMode: activePositionSizing.riskMode,
     explanation: explanation.why,
     invalidation:
       assetType === "crypto"
@@ -319,15 +382,10 @@ export function analyzeMarketData(points: MarketDataPoint[], assetType: AssetTyp
   return {
     assetType,
     riskProfile,
-    rangeUsage: {
-      chart: "Selected chart range",
-      currentSignal: `Recent ${config.currentDecisionLookbackDays} daily candles`,
-      backtest: "Full fetched history",
-      validation: validation.range.validationRange
-    },
+    rangeUsage,
     riskMetrics: metrics,
     drawdown,
-    positionSizing,
+    positionSizing: activePositionSizing,
     investability,
     backtest: fullBacktest,
     allocationAdjustedBacktest,
@@ -338,7 +396,7 @@ export function analyzeMarketData(points: MarketDataPoint[], assetType: AssetTyp
       risk: riskLayer,
       expectedValue: ev,
       validation,
-      positionSizing,
+      positionSizing: activePositionSizing,
       portfolioRisk,
       finalDecision,
       explanation,
@@ -392,14 +450,14 @@ export function analyzeMarketData(points: MarketDataPoint[], assetType: AssetTyp
           score: validation.validationScore
         }),
         sizing: layerResult({
-          status: positionSizing.finalAllocation > 0 ? "pass" : "fail",
-          reason: `Final allocation is limited by ${positionSizing.limitingFactor}.`,
-          warnings: positionSizing.warnings,
+          status: activePositionSizing.finalAllocation > 0 ? "pass" : "fail",
+          reason: `Final allocation is limited by ${activePositionSizing.limitingFactor}.`,
+          warnings: activePositionSizing.warnings,
           rawMetrics: {
-            volatilityTargetAllocation: positionSizing.volatilityTargetAllocation,
-            fractionalKellyAllocation: positionSizing.fractionalKellyAllocation,
-            assetClassMaxAllocation: positionSizing.assetClassMaxAllocation,
-            drawdownAdjustedAllocation: positionSizing.drawdownAdjustedAllocation
+            volatilityTargetAllocation: activePositionSizing.volatilityTargetAllocation,
+            fractionalKellyAllocation: activePositionSizing.fractionalKellyAllocation,
+            assetClassMaxAllocation: activePositionSizing.assetClassMaxAllocation,
+            drawdownAdjustedAllocation: activePositionSizing.drawdownAdjustedAllocation
           }
         }),
         portfolioRisk: layerResult({
@@ -423,6 +481,7 @@ export function analyzeMarketData(points: MarketDataPoint[], assetType: AssetTyp
     },
     optimalEntryZone,
     entryZoneAblation,
+    dataRanges: rangeOptions.dataRangeResult,
     assumptions: [
       "Historical simulation only; results are not a forecast or guarantee.",
       "Daily close-to-close data is used for the first version.",

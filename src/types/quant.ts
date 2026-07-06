@@ -1,6 +1,7 @@
-import type { AssetType, RiskProfile } from "./asset";
+import type { AssetType, DataFetchResult, RiskProfile } from "./asset";
 
 export type SampleQuality = "Poor" | "Limited" | "Acceptable" | "Strong";
+export type ValidationEvidenceState = "No Evidence" | "Weak Evidence" | "Moderate Evidence" | "Strong Evidence" | "Failed Evidence";
 export type RegimeLabel = "Trend Up" | "Trend Down" | "Range / Chop" | "High Volatility" | "Risk-Off" | "No Data / Avoid";
 export type DrawdownStressLabel = "Normal" | "Elevated" | "Severe" | "Risk-Off";
 export type DecisionLabel =
@@ -340,6 +341,7 @@ export interface BacktestValidationResult {
     minimumOutOfSampleTrades: number;
   };
   robustnessLabel: "Robust" | "Moderate" | "Unstable" | "Insufficient Data";
+  validationEvidenceState: ValidationEvidenceState;
   validationScore: number;
   warnings: string[];
 }
@@ -419,5 +421,6 @@ export interface QuantAnalysis {
   pipeline: QuantDecisionPipeline;
   optimalEntryZone: OptimalEntryZoneResult;
   entryZoneAblation: EntryZoneAblationResult;
+  dataRanges?: DataFetchResult;
   assumptions: string[];
 }

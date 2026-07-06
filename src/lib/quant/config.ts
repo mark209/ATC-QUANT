@@ -65,6 +65,12 @@ export interface QuantConfig {
     walkForward: number;
     parameterSensitivity: number;
   };
+  decisionThresholds: {
+    minimumMeaningfulAllocation: number;
+    strongCandidateAllocation: number;
+    positionAllowedValidationScore: number;
+    strongCandidateValidationScore: number;
+  };
   optimalEntryZone: OptimalEntryZoneConfig;
 }
 
@@ -161,6 +167,12 @@ export const DEFAULT_QUANT_CONFIG: QuantConfig = {
     outOfSample: 0.4,
     walkForward: 0.35,
     parameterSensitivity: 0.25
+  },
+  decisionThresholds: {
+    minimumMeaningfulAllocation: 0.01,
+    strongCandidateAllocation: 0.05,
+    positionAllowedValidationScore: 60,
+    strongCandidateValidationScore: 70
   },
   optimalEntryZone: {
     rollingVWAPWindowsDays: [7, 30, 90],

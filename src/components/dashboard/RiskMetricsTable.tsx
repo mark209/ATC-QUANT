@@ -32,8 +32,8 @@ export function RiskMetricsTable({ metrics }: { metrics: RiskMetrics }) {
       </div>
       {metrics.ratioWarnings.length > 0 && (
         <div className="mt-3 rounded-lg border border-amber/30 bg-amber/10 p-3 text-xs leading-5 text-slate-300">
-          {metrics.ratioWarnings.map((warning) => (
-            <p key={warning}>{warning}</p>
+          {metrics.ratioWarnings.map((warning, index) => (
+            <p key={`ratio-warning-${index}-${warning}`}>{warning}</p>
           ))}
         </div>
       )}

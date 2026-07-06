@@ -1,5 +1,11 @@
 import type { AssetType, MarketDataPoint } from "@/types/asset";
-import type { BacktestSummary, BacktestValidationResult, ParameterSensitivityResult, WalkForwardResult } from "@/types/quant";
+import type {
+  BacktestSummary,
+  BacktestValidationResult,
+  ParameterSensitivityResult,
+  ValidationEvidenceState,
+  WalkForwardResult
+} from "@/types/quant";
 import type { QuantConfig } from "./config";
 import { boundedScore } from "./config";
 import { runTrendBacktest } from "./backtest";
@@ -179,6 +185,54 @@ function runParameterSensitivity(
   };
 }
 
+function clampScoreForEvidence(rawScore: number, evidenceState: ValidationEvidenceState): number {
+  if (evidenceState === "No Evidence") return 0;
+  if (evidenceState === "Failed Evidence") return Math.min(rawScore, 35);
+  if (evidenceState === "Weak Evidence") return Math.min(Math.max(rawScore, 25), 44);
+  if (evidenceState === "Moderate Evidence") return Math.min(Math.max(rawScore, 45), 65);
+  return Math.max(rawScore, 66);
+}
+
+function robustnessForEvidence(
+  evidenceState: ValidationEvidenceState,
+  validationScore: number
+): BacktestValidationResult["robustnessLabel"] {
+  if (evidenceState === "No Evidence") return "Insufficient Data";
+  if (evidenceState === "Failed Evidence") return "Unstable";
+  if (evidenceState === "Weak Evidence") return "Unstable";
+  if (evidenceState === "Moderate Evidence") return "Moderate";
+  return validationScore >= 75 ? "Robust" : "Moderate";
+}
+
+function classifyEvidence(input: {
+  validationPoints: MarketDataPoint[];
+  totalTrades: number;
+  outOfSample: BacktestSummary;
+  minOosTrades: number;
+  rawValidationScore: number;
+  walkForward: WalkForwardResult;
+  parameterSensitivity: ParameterSensitivityResult;
+  config: QuantConfig;
+}): ValidationEvidenceState {
+  if (input.validationPoints.length < input.config.minDataPoints) return "No Evidence";
+  if (input.totalTrades < 10 || input.outOfSample.totalTrades === 0) return "No Evidence";
+
+  const materiallyBadOos =
+    input.outOfSample.totalTrades > 0 &&
+    (input.outOfSample.totalReturn <= -0.08 || input.outOfSample.expectancy <= -0.03 || input.outOfSample.maxDrawdown <= -0.25);
+  const consistentlyUnstable =
+    input.walkForward.stabilityLabel === "Unstable" &&
+    input.walkForward.averageOutOfSampleReturn < 0 &&
+    input.parameterSensitivity.robustnessLabel === "Highly Sensitive / Overfit Risk";
+  if (materiallyBadOos || consistentlyUnstable) return "Failed Evidence";
+
+  if (input.totalTrades >= 60 && input.outOfSample.totalTrades >= 15 && input.rawValidationScore >= 60) return "Strong Evidence";
+  if (input.totalTrades >= input.config.validation.minTotalTrades && input.outOfSample.totalTrades >= 8) return "Moderate Evidence";
+  if (input.totalTrades >= 10 && input.outOfSample.totalTrades > 0) return "Weak Evidence";
+
+  return "No Evidence";
+}
+
 export function validateTrendBacktest(
   points: MarketDataPoint[],
   assetType: AssetType,
@@ -213,6 +267,7 @@ export function validateTrendBacktest(
       },
       range,
       robustnessLabel: "Insufficient Data",
+      validationEvidenceState: "No Evidence",
       validationScore: 0,
       warnings: [
         "Insufficient data for reliable out-of-sample and walk-forward validation.",
@@ -228,14 +283,18 @@ export function validateTrendBacktest(
   const parameterSensitivity = runParameterSensitivity(validationPoints, assetType, config, validationRange);
   const fullBacktest = runTrendBacktest(validationPoints, assetType, config.feeRate, config.slippageRate);
   const totalTrades = fullBacktest.totalTrades;
-  const outOfSampleLabel = outOfSample.totalTrades < minOosTrades ? "Insufficient Data" : "Reliable";
+  const outOfSampleLabel = outOfSample.totalTrades === 0 ? "Insufficient Data" : outOfSample.totalTrades < minOosTrades ? "Inconclusive" : "Reliable";
   const unadjustedEquityPrices = hasUnadjustedEquityPrices(validationPoints, assetType);
 
   warnings.push(...walkForward.warnings, ...parameterSensitivity.warnings);
   if (outOfSamplePoints.length < config.minTradeCount) warnings.push("Out-of-sample period is short; validation confidence is limited.");
-  if (totalTrades < config.validation.minTotalTrades) warnings.push("Total trades are below 30; validation is an insufficient sample.");
-  if (outOfSampleLabel === "Insufficient Data") {
-    warnings.push(`Out-of-sample trade count is below the ${minOosTrades}-trade minimum for ${validationRangeLabel(validationRange)} validation.`);
+  if (totalTrades < config.validation.minTotalTrades) warnings.push("Low trade count reduces confidence.");
+  if (outOfSample.totalTrades > 0 && outOfSample.totalTrades < minOosTrades) {
+    warnings.push("Validation evidence is weak due to low OOS trade count.");
+    warnings.push(`Out-of-sample trade count is below the ${minOosTrades}-trade target for ${validationRangeLabel(validationRange)} validation.`);
+  }
+  if (outOfSample.totalTrades === 0) {
+    warnings.push(`Out-of-sample trade count is zero for ${validationRangeLabel(validationRange)} validation.`);
   }
   if (unadjustedEquityPrices) {
     warnings.push("Equity adjusted OHLC data was unavailable; validation confidence is reduced because returns/backtests may be affected by splits or corporate actions.");
@@ -264,26 +323,24 @@ export function validateTrendBacktest(
       walkForwardScore * config.validationWeights.walkForward +
       sensitivityScore * config.validationWeights.parameterSensitivity
   );
-  const validationScore =
-    totalTrades < config.validation.minTotalTrades || outOfSampleLabel === "Insufficient Data"
-      ? Math.min(rawValidationScore, 40)
-      : unadjustedEquityPrices
-        ? Math.min(rawValidationScore, 55)
-      : rawValidationScore;
-  const robustnessLabel =
-    totalTrades < config.validation.minTotalTrades || outOfSampleLabel === "Insufficient Data"
-      ? "Insufficient Data"
-      : unadjustedEquityPrices
-        ? "Moderate"
-      : walkForward.stabilityLabel === "Insufficient Data" || walkForward.stabilityLabel === "Insufficient trades per window"
-        ? outOfSampleLabel === "Reliable" && outOfSampleScore >= 65
-          ? "Moderate"
-          : "Insufficient Data"
-      : validationScore >= 75
-        ? "Robust"
-        : validationScore >= 55
-          ? "Moderate"
-          : "Unstable";
+  const validationEvidenceState = classifyEvidence({
+    validationPoints,
+    totalTrades,
+    outOfSample,
+    minOosTrades,
+    rawValidationScore,
+    walkForward,
+    parameterSensitivity,
+    config
+  });
+  if (validationEvidenceState === "Failed Evidence") warnings.push("Validation failed because out-of-sample evidence is materially negative or unstable.");
+  const validationScoreBeforeAdjustment = clampScoreForEvidence(rawValidationScore, validationEvidenceState);
+  const validationScore = unadjustedEquityPrices
+    ? Math.min(validationScoreBeforeAdjustment, 55)
+    : validationScoreBeforeAdjustment;
+  const robustnessLabel = unadjustedEquityPrices && validationEvidenceState === "Strong Evidence"
+    ? "Moderate"
+    : robustnessForEvidence(validationEvidenceState, validationScore);
 
   return {
     inSample,
@@ -293,6 +350,7 @@ export function validateTrendBacktest(
     parameterSensitivity,
     range,
     robustnessLabel,
+    validationEvidenceState,
     validationScore,
     warnings
   };

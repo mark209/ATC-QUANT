@@ -11,6 +11,7 @@ const baseInput = {
   signalScore: 76,
   riskScore: 72,
   validationScore: 70,
+  validationEvidenceState: "Strong Evidence" as const,
   liquidityScore: 80,
   finalPositionSize: 0.08,
   riskWarnings: [],
@@ -39,10 +40,18 @@ describe("final decision engine", () => {
     expect(result.finalPositionSize).toBe(0);
   });
 
+  it("forces active allocation to zero for No Data / Avoid", () => {
+    const result = buildFinalDecision({ ...baseInput, dataQualityPassed: false, finalPositionSize: 0.08 });
+
+    expect(result.decisionLabel).toBe("No Data / Avoid");
+    expect(result.finalPositionSize).toBe(0);
+  });
+
   it("returns Risk-off / no trade for a risk-off regime", () => {
-    const result = buildFinalDecision({ ...baseInput, regimeLabel: "Risk-Off" });
+    const result = buildFinalDecision({ ...baseInput, regimeLabel: "Risk-Off", finalPositionSize: 0.08 });
 
     expect(result.decisionLabel).toBe("Risk-off / no trade");
+    expect(result.finalPositionSize).toBe(0);
   });
 
   it("returns Risk-off / no trade for a risk-off hard filter failure", () => {
@@ -68,6 +77,131 @@ describe("final decision engine", () => {
 
     expect(result.decisionLabel).toBe("Avoid for now");
     expect(result.blockingReasons).toContain("Expected value after costs");
+    expect(result.finalPositionSize).toBe(0);
+  });
+
+  it("forces active allocation to zero for Avoid for now", () => {
+    const result = buildFinalDecision({
+      ...baseInput,
+      hardFiltersPassed: false,
+      hardFilterBlockingReason: "Expected value after costs",
+      expectedValuePassed: false,
+      finalPositionSize: 0.04,
+      blockingReasons: ["Expected value after costs"]
+    });
+
+    expect(result.decisionLabel).toBe("Avoid for now");
+    expect(result.finalPositionSize).toBe(0);
+  });
+
+  it("does not allow Watchlist only to carry active allocation", () => {
+    const result = buildFinalDecision({
+      ...baseInput,
+      signalScore: 48,
+      riskScore: 70,
+      validationScore: 70,
+      finalPositionSize: 0.06
+    });
+
+    expect(result.decisionLabel).toBe("Watchlist only");
+    expect(result.finalPositionSize).toBe(0);
+  });
+
+  it("returns Small allocation only for sub-1% nonzero allocation", () => {
+    const result = buildFinalDecision({
+      ...baseInput,
+      signalScore: 88,
+      riskScore: 76,
+      validationScore: 78,
+      finalPositionSize: 0.0027
+    });
+
+    expect(result.decisionLabel).toBe("Small allocation only");
+    expect(result.finalPositionSize).toBeCloseTo(0.0027, 8);
+  });
+
+  it("requires allocation above the configured meaningful minimum for Position allowed", () => {
+    const result = buildFinalDecision({
+      ...baseInput,
+      signalScore: 88,
+      riskScore: 76,
+      validationScore: 65,
+      finalPositionSize: 0.012
+    });
+
+    expect(result.decisionLabel).toBe("Position allowed");
+    expect(result.finalPositionSize).toBeCloseTo(0.012, 8);
+  });
+
+  it("requires stronger validation and meaningful allocation for Strong candidate", () => {
+    const weakAllocation = buildFinalDecision({
+      ...baseInput,
+      signalScore: 90,
+      riskScore: 80,
+      validationScore: 78,
+      finalPositionSize: 0.02
+    });
+    const strong = buildFinalDecision({
+      ...baseInput,
+      signalScore: 90,
+      riskScore: 80,
+      validationScore: 78,
+      finalPositionSize: 0.06
+    });
+
+    expect(weakAllocation.decisionLabel).toBe("Position allowed");
+    expect(strong.decisionLabel).toBe("Strong candidate");
+  });
+
+  it("requires Strong Evidence for Strong candidate", () => {
+    const result = buildFinalDecision({
+      ...baseInput,
+      signalScore: 90,
+      riskScore: 80,
+      validationScore: 78,
+      validationEvidenceState: "Moderate Evidence",
+      finalPositionSize: 0.06
+    });
+
+    expect(result.decisionLabel).toBe("Position allowed");
+  });
+
+  it("allows Weak Evidence to carry only Small allocation when other checks pass", () => {
+    const result = buildFinalDecision({
+      ...baseInput,
+      signalScore: 88,
+      riskScore: 76,
+      validationScore: 44,
+      validationEvidenceState: "Weak Evidence",
+      finalPositionSize: 0.004
+    });
+
+    expect(result.decisionLabel).toBe("Small allocation only");
+    expect(result.finalPositionSize).toBeCloseTo(0.004, 8);
+  });
+
+  it("forces No Evidence to zero active allocation", () => {
+    const result = buildFinalDecision({
+      ...baseInput,
+      validationScore: 0,
+      validationEvidenceState: "No Evidence",
+      finalPositionSize: 0.04
+    });
+
+    expect(result.decisionLabel).toBe("Watchlist only");
+    expect(result.finalPositionSize).toBe(0);
+  });
+
+  it("forces Failed Evidence to Avoid for now and zero active allocation", () => {
+    const result = buildFinalDecision({
+      ...baseInput,
+      validationScore: 25,
+      validationEvidenceState: "Failed Evidence",
+      finalPositionSize: 0.04
+    });
+
+    expect(result.decisionLabel).toBe("Avoid for now");
+    expect(result.finalPositionSize).toBe(0);
   });
 
   it("returns Small allocation only for strong signal with high risk", () => {

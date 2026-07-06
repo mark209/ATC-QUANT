@@ -211,6 +211,7 @@ function analysis(overrides: Partial<QuantAnalysis["pipeline"]["finalDecision"]>
           minimumOutOfSampleTrades: 20
         },
         robustnessLabel: "Robust",
+        validationEvidenceState: "Strong Evidence",
         validationScore: 76,
         warnings: []
       },
@@ -328,7 +329,42 @@ describe("market scanner", () => {
           lastUpdated: "2026-06-08T00:00:00.000Z",
           liveSource: "test"
         },
-        prices: []
+        prices: [],
+        dataRanges: {
+          symbol: "SPY",
+          assetType: "etf",
+          overview: {
+            symbol: "SPY",
+            name: "SPDR S&P 500 ETF",
+            assetType: "etf",
+            market: "ETF",
+            exchange: "NYSE Arca",
+            currentPrice: 500,
+            dailyChangePercent: 0.01,
+            dailyVolume: 1000000,
+            lastUpdated: "2026-06-08T00:00:00.000Z",
+            liveSource: "test"
+          },
+          chartRangeRequested: "max",
+          chartDataRangeUsed: "max",
+          engineRangeUsed: "10y",
+          backtestRangeUsed: "10y",
+          validationRangeUsed: "10y",
+          fallbackUsed: true,
+          fallbackReason: "Chart range max was sparse; engine used 10y daily data.",
+          chartCandles: [],
+          engineCandles: [],
+          backtestCandles: [],
+          validationCandles: [],
+          density: {
+            chart: {} as never,
+            engine: { actualCandleCount: 2514, isSparse: false } as never,
+            backtest: {} as never,
+            validation: {} as never
+          },
+          warnings: [],
+          issues: []
+        }
       },
       analysis: analysis()
     };
@@ -339,6 +375,10 @@ describe("market scanner", () => {
     expect(result.decisionLabel).toBe("Position allowed");
     expect(result.passed).toBe(true);
     expect(result.finalPositionSize).toBe(0.08);
+    expect(result.engineRangeUsed).toBe("10y");
+    expect(result.engineCandleCount).toBe(2514);
+    expect(result.fallbackUsed).toBe(true);
+    expect(result.dataDensityStatus).toBe("Dense");
   });
 
   it("blocks passed status when expected value after costs is not positive", () => {

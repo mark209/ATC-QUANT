@@ -19,6 +19,13 @@ export function formatNumber(value: number): string {
   }).format(value);
 }
 
+export function formatRatio(value: number, options: { meaningfulAbsLimit?: number } = {}): string {
+  if (!Number.isFinite(value)) return "Not meaningful";
+  const limit = options.meaningfulAbsLimit;
+  if (typeof limit === "number" && Math.abs(value) >= limit) return "Not meaningful";
+  return formatNumber(value);
+}
+
 export function compactNumber(value: number): string {
   if (!Number.isFinite(value)) return "n/a";
   return new Intl.NumberFormat("en-US", {

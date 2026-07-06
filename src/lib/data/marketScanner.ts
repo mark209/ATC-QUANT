@@ -23,6 +23,11 @@ export interface MarketScanResult {
   primaryReason: string;
   warning: string;
   passed: boolean;
+  engineRangeUsed?: string;
+  engineCandleCount?: number;
+  fallbackUsed?: boolean;
+  fallbackReason?: string;
+  dataDensityStatus?: "Dense" | "Sparse" | "Unknown";
   error?: string;
 }
 
@@ -94,6 +99,7 @@ export function summarizeScanAnalysis(response: MarketAnalysisResponse): MarketS
   const expectedValue = analysis.pipeline.expectedValue;
   const validation = analysis.pipeline.validation;
   const sizing = analysis.pipeline.positionSizing;
+  const dataRanges = dataset.dataRanges ?? analysis.dataRanges;
   const passed =
     investableLabels.has(finalDecision.decisionLabel) &&
     finalDecision.finalPositionSize > 0 &&
@@ -112,7 +118,12 @@ export function summarizeScanAnalysis(response: MarketAnalysisResponse): MarketS
     limitingFactor: sizing.limitingFactor,
     primaryReason: finalDecision.primaryReasons[0] ?? analysis.pipeline.explanation.why,
     warning: finalDecision.warnings[0] ?? validation.warnings[0] ?? expectedValue.warnings[0] ?? "",
-    passed
+    passed,
+    engineRangeUsed: dataRanges?.engineRangeUsed,
+    engineCandleCount: dataRanges?.engineCandles.length || dataRanges?.density.engine.actualCandleCount,
+    fallbackUsed: dataRanges?.fallbackUsed,
+    fallbackReason: dataRanges?.fallbackReason,
+    dataDensityStatus: dataRanges ? (dataRanges.density.engine.isSparse ? "Sparse" : "Dense") : "Unknown"
   };
 }
 

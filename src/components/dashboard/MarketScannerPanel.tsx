@@ -165,8 +165,8 @@ export function MarketScannerPanel({ riskProfile, onSelectCandidate }: MarketSca
           </div>
 
           <div className="grid gap-2 text-xs leading-5 text-slate-500">
-            {scan.warnings.map((warning) => (
-              <p key={warning}>{warning}</p>
+            {scan.warnings.map((warning, index) => (
+              <p key={`scan-warning-${index}-${warning}`}>{warning}</p>
             ))}
           </div>
         </div>
