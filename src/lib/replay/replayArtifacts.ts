@@ -6,6 +6,8 @@ import type { TradeRecord } from "@/lib/trading/tradeJournal";
 import { canonicalJson } from "@/lib/trading/tradeJournal";
 import { calculateHash, hashJournal, type ReplayArtifacts, type ReplayIdentity } from "@/lib/quant/replayVerification";
 import { createDatasetManifest, validateFrozenDataset, type FrozenDataset, type DatasetManifest } from "./frozenDataset";
+import type { DecisionPipelineDiagnostics } from "./decisionPipelineDiagnostics";
+import { renderDecisionPipelineReport } from "./decisionPipelineDiagnostics";
 
 export const REPLAY_ARTIFACT_SCHEMA_VERSION = "1.0";
 
@@ -64,6 +66,7 @@ export interface ReplayArtifactBundle {
   readonly analytics: AnalyticsSnapshot;
   readonly replay_report: ReplayReportArtifact;
   readonly artifact_manifest: ArtifactManifest;
+  readonly diagnostics?: DecisionPipelineDiagnostics;
 }
 
 function lines(entries: readonly unknown[]): string {
@@ -94,6 +97,9 @@ export class ReplayArtifactStore {
       ["replay-report.json", canonicalJson(bundle.replay_report)],
       ["artifact-manifest.json", canonicalJson(bundle.artifact_manifest)]
     ];
+    if (bundle.diagnostics) {
+      files.splice(files.length - 1, 0, ["decision-pipeline-diagnostics.json", canonicalJson(bundle.diagnostics)], ["decision-pipeline-diagnostics.md", renderDecisionPipelineReport(bundle.diagnostics)]);
+    }
     for (const [name, content] of files) await writeFile(join(directory, name), content, { encoding: "utf8", flag: "wx" });
     return directory;
   }
@@ -110,6 +116,8 @@ export class ReplayArtifactStore {
     const analytics = await readJson<AnalyticsSnapshot>("analytics.json");
     const replayReport = await readJson<ReplayReportArtifact>("replay-report.json");
     const artifactManifest = await readJson<ArtifactManifest>("artifact-manifest.json");
+    let diagnostics: DecisionPipelineDiagnostics | undefined;
+    try { diagnostics = await readJson<DecisionPipelineDiagnostics>("decision-pipeline-diagnostics.json"); } catch { diagnostics = undefined; }
     validateFrozenDataset(dataset);
     const expectedDatasetManifest = createDatasetManifest(dataset);
     if (canonicalJson(expectedDatasetManifest) !== canonicalJson(datasetManifest)) throw new Error("dataset manifest does not match dataset");
@@ -133,7 +141,7 @@ export class ReplayArtifactStore {
       analytics_inputs: analytics,
       replay_output: replayReport
     };
-    return { replay_manifest: replayManifest, dataset_manifest: datasetManifest, dataset, artifacts, analytics, replay_report: replayReport, artifact_manifest: artifactManifest };
+    return { replay_manifest: replayManifest, dataset_manifest: datasetManifest, dataset, artifacts, analytics, replay_report: replayReport, artifact_manifest: artifactManifest, diagnostics };
   }
 
   async latest(): Promise<ReplayArtifactBundle> {
@@ -142,6 +150,12 @@ export class ReplayArtifactStore {
     const latest = replayIds.at(-1);
     if (!latest) throw new Error("no persisted replay artifacts exist");
     return this.read(latest);
+  }
+
+  async writeDiagnostics(replayId: string, diagnostics: DecisionPipelineDiagnostics): Promise<void> {
+    const directory = this.directory(replayId);
+    await writeFile(join(directory, "decision-pipeline-diagnostics.json"), canonicalJson(diagnostics), "utf8");
+    await writeFile(join(directory, "decision-pipeline-diagnostics.md"), renderDecisionPipelineReport(diagnostics), "utf8");
   }
 }
 
