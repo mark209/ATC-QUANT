@@ -18,7 +18,9 @@
     "validate-datasets": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/validateDatasets.ts",
     "import-dataset": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/importDataset.ts",
     "replay-all": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/replayAll.ts",
-    "research-report": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/researchReport.ts"
+    "research-report": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/researchReport.ts",
+    "analyze": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/runAnalyze.ts",
+    "analyze-all": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/runAnalyzeAll.ts"
   },
   "dependencies": {
     "@next/eslint-plugin-next": "^15.3.3",
