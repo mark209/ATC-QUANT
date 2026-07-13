@@ -12,6 +12,7 @@ import type { ReplayArtifacts, ReplayIdentity } from "@/lib/quant/replayVerifica
 import { calculateHash } from "@/lib/quant/replayVerification";
 import { createDatasetManifest, validateFrozenDataset, type FrozenDataset } from "./frozenDataset";
 import { buildAnalyticsSnapshot, buildArtifactManifest, ReplayArtifactStore, type ReplayArtifactBundle, type ReplayManifest, type ReplayReportArtifact } from "./replayArtifacts";
+import { generateDecisionPipelineDiagnostics } from "./decisionPipelineDiagnostics";
 
 export const REPLAY_ENGINE_VERSION = "phase3-replay-1";
 
@@ -180,7 +181,8 @@ export class DeterministicReplayRunner {
     const replayManifest: ReplayManifest = Object.freeze({ ...identity, artifact_schema_version: "1.0" });
     const replayReport: ReplayReportArtifact = Object.freeze({ replay_id: identity.replay_id, dataset_id: dataset.dataset_id, dataset_hash: dataset.dataset_hash, strategy_version: identity.strategy_version, execution_profile: identity.execution_profile, decision_count: decisions.length, trade_count: trades.length, execution_event_count: executionEvents.length, lifecycle_event_count: lifecycleEvents.length, generated_at: identity.replay_timestamp, status: "COMPLETED" });
     const artifactManifest = buildArtifactManifest({ replay_manifest: replayManifest, execution_events: executionEvents, lifecycle_events: lifecycleEvents, trades, analytics, replay_report: replayReport });
-    const bundle: ReplayArtifactBundle = { replay_manifest: replayManifest, dataset_manifest: createDatasetManifest(dataset), dataset, artifacts: { metadata: { ...identity, journal_hash: artifactManifest.trade_journal_hash, execution_journal_hash: artifactManifest.execution_journal_hash, lifecycle_journal_hash: artifactManifest.lifecycle_journal_hash, analytics_inputs_hash: artifactManifest.analytics_hash }, trades, execution_events: executionEvents, lifecycle_events: lifecycleEvents, analytics_inputs: analytics, replay_output: replayReport }, analytics, replay_report: replayReport, artifact_manifest: artifactManifest };
+    const diagnostics = generateDecisionPipelineDiagnostics({ replayId: identity.replay_id, generatedAt: identity.replay_timestamp, dataset, assetType: this.options.asset_type, riskProfile: this.options.risk_profile, executionEvents, lifecycleEvents, trades });
+    const bundle: ReplayArtifactBundle = { replay_manifest: replayManifest, dataset_manifest: createDatasetManifest(dataset), dataset, artifacts: { metadata: { ...identity, journal_hash: artifactManifest.trade_journal_hash, execution_journal_hash: artifactManifest.execution_journal_hash, lifecycle_journal_hash: artifactManifest.lifecycle_journal_hash, analytics_inputs_hash: artifactManifest.analytics_hash }, trades, execution_events: executionEvents, lifecycle_events: lifecycleEvents, analytics_inputs: analytics, replay_output: replayReport }, analytics, replay_report: replayReport, artifact_manifest: artifactManifest, diagnostics };
     if (persist) await this.artifactStore.write(bundle);
     return bundle;
   }

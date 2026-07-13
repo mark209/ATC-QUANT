@@ -9,7 +9,16 @@
     "test": "vitest run --config vitest.config.mjs",
     "typecheck": "tsc --noEmit",
     "replay": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/runReplay.ts",
-    "verify-replay": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/verifyReplay.ts"
+    "verify-replay": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/verifyReplay.ts",
+    "diagnostics": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/runDiagnostics.ts",
+    "explain-replay": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/runExplainReplay.ts",
+    "generate-replay-datasets": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/generateReplayDatasetMatrix.ts",
+    "replay-matrix": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/runReplayMatrix.ts",
+    "datasets": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/listDatasets.ts",
+    "validate-datasets": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/validateDatasets.ts",
+    "import-dataset": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/importDataset.ts",
+    "replay-all": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/replayAll.ts",
+    "research-report": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/researchReport.ts"
   },
   "dependencies": {
     "@next/eslint-plugin-next": "^15.3.3",

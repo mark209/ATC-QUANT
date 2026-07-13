@@ -3,16 +3,27 @@ import { FrozenDatasetStore } from "../src/lib/replay/frozenDataset";
 import { createBundledResearchDataset } from "../src/lib/replay/sampleDataset";
 import { ReplayArtifactStore } from "../src/lib/replay/replayArtifacts";
 import { DeterministicReplayRunner, REPLAY_ENGINE_VERSION, type ProductionReplayIdentity } from "../src/lib/replay/replayRunner";
+import { DatasetLibrary } from "../src/lib/datasets/datasetLibrary";
 
-const datasetPath = "data/frozen/atc-bundled-research-fixture.json";
-const datasetStore = new FrozenDatasetStore(datasetPath);
+const requestedDataset = process.argv.find((argument) => argument.startsWith("--dataset="))?.slice("--dataset=".length) ?? process.env.npm_config_dataset;
 let dataset;
-try { dataset = await datasetStore.read(); }
-catch { dataset = createBundledResearchDataset(); await datasetStore.write(dataset); }
-
-const configuration = { asset_type: "stock", risk_profile: "balanced" };
+let configuration: { asset_type: "crypto" | "stock" | "etf" | "index"; risk_profile: "conservative" | "balanced" | "aggressive" };
+let replayId: string;
+if (requestedDataset) {
+  const selected = await new DatasetLibrary("datasets").get(requestedDataset);
+  dataset = selected.dataset;
+  configuration = { asset_type: selected.metadata.asset_type, risk_profile: "balanced" };
+  replayId = `institutional-${selected.metadata.dataset_id}-${selected.metadata.dataset_version}`;
+} else {
+  const datasetPath = "data/frozen/atc-bundled-research-fixture.json";
+  const datasetStore = new FrozenDatasetStore(datasetPath);
+  try { dataset = await datasetStore.read(); }
+  catch { dataset = createBundledResearchDataset(); await datasetStore.write(dataset); }
+  configuration = { asset_type: "stock", risk_profile: "balanced" };
+  replayId = "phase3-bundled-replay-v1";
+}
 const identity: ProductionReplayIdentity = {
-  replay_id: "phase3-bundled-replay-v1",
+  replay_id: replayId,
   dataset_id: dataset.dataset_id,
   dataset_version: dataset.dataset_version,
   dataset_hash: dataset.dataset_hash,
@@ -28,7 +39,7 @@ const identity: ProductionReplayIdentity = {
 
 let bundle;
 try { bundle = await new ReplayArtifactStore("replays").read(identity.replay_id); }
-catch { bundle = await new DeterministicReplayRunner({ asset_type: "stock", risk_profile: "balanced", root_directory: "replays" }).runAndPersist(identity, dataset); }
+  catch { bundle = await new DeterministicReplayRunner({ asset_type: configuration.asset_type, risk_profile: configuration.risk_profile, root_directory: "replays" }).runAndPersist(identity, dataset); }
 console.log("ATC REPLAY");
 console.log(`Replay ID: ${bundle.replay_manifest.replay_id}`);
 console.log(`Dataset hash: ${bundle.replay_manifest.dataset_hash}`);
