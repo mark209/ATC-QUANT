@@ -11,6 +11,7 @@
     "replay": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/runReplay.ts",
     "verify-replay": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/verifyReplay.ts",
     "diagnostics": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/runDiagnostics.ts",
+    "explain-replay": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/runExplainReplay.ts",
     "generate-replay-datasets": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/generateReplayDatasetMatrix.ts",
     "replay-matrix": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/runReplayMatrix.ts"
   },

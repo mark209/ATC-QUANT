@@ -8,6 +8,7 @@ import { calculateHash, hashJournal, type ReplayArtifacts, type ReplayIdentity }
 import { createDatasetManifest, validateFrozenDataset, type FrozenDataset, type DatasetManifest } from "./frozenDataset";
 import type { DecisionPipelineDiagnostics } from "./decisionPipelineDiagnostics";
 import { renderDecisionPipelineReport } from "./decisionPipelineDiagnostics";
+import { renderStrategyTraceReport, type StrategyTraceRecord, type StrategyTraceReport } from "./strategyTrace";
 
 export const REPLAY_ARTIFACT_SCHEMA_VERSION = "1.0";
 
@@ -67,6 +68,8 @@ export interface ReplayArtifactBundle {
   readonly replay_report: ReplayReportArtifact;
   readonly artifact_manifest: ArtifactManifest;
   readonly diagnostics?: DecisionPipelineDiagnostics;
+  readonly strategy_trace?: readonly StrategyTraceRecord[];
+  readonly explainability_report?: StrategyTraceReport;
 }
 
 function lines(entries: readonly unknown[]): string {
@@ -118,6 +121,10 @@ export class ReplayArtifactStore {
     const artifactManifest = await readJson<ArtifactManifest>("artifact-manifest.json");
     let diagnostics: DecisionPipelineDiagnostics | undefined;
     try { diagnostics = await readJson<DecisionPipelineDiagnostics>("decision-pipeline-diagnostics.json"); } catch { diagnostics = undefined; }
+    let strategyTrace: StrategyTraceRecord[] | undefined;
+    let explainabilityReport: StrategyTraceReport | undefined;
+    try { strategyTrace = parseLines<StrategyTraceRecord>(await readFile(join(directory, "strategy-trace.jsonl"), "utf8")); } catch { strategyTrace = undefined; }
+    try { explainabilityReport = await readJson<StrategyTraceReport>("strategy-explainability.json"); } catch { explainabilityReport = undefined; }
     validateFrozenDataset(dataset);
     const expectedDatasetManifest = createDatasetManifest(dataset);
     if (canonicalJson(expectedDatasetManifest) !== canonicalJson(datasetManifest)) throw new Error("dataset manifest does not match dataset");
@@ -141,7 +148,7 @@ export class ReplayArtifactStore {
       analytics_inputs: analytics,
       replay_output: replayReport
     };
-    return { replay_manifest: replayManifest, dataset_manifest: datasetManifest, dataset, artifacts, analytics, replay_report: replayReport, artifact_manifest: artifactManifest, diagnostics };
+    return { replay_manifest: replayManifest, dataset_manifest: datasetManifest, dataset, artifacts, analytics, replay_report: replayReport, artifact_manifest: artifactManifest, diagnostics, strategy_trace: strategyTrace, explainability_report: explainabilityReport };
   }
 
   async latest(): Promise<ReplayArtifactBundle> {
@@ -156,6 +163,13 @@ export class ReplayArtifactStore {
     const directory = this.directory(replayId);
     await writeFile(join(directory, "decision-pipeline-diagnostics.json"), canonicalJson(diagnostics), "utf8");
     await writeFile(join(directory, "decision-pipeline-diagnostics.md"), renderDecisionPipelineReport(diagnostics), "utf8");
+  }
+
+  async writeExplainability(replayId: string, traces: readonly StrategyTraceRecord[], report: StrategyTraceReport): Promise<void> {
+    const directory = this.directory(replayId);
+    await writeFile(join(directory, "strategy-trace.jsonl"), lines(traces), "utf8");
+    await writeFile(join(directory, "strategy-explainability.json"), canonicalJson(report), "utf8");
+    await writeFile(join(directory, "strategy-explainability-report.md"), renderStrategyTraceReport(report), "utf8");
   }
 }
 
