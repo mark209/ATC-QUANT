@@ -11,7 +11,13 @@ describe("institutional dataset library", () => {
 
   it("rejects non-UTC timestamps and exposes an empty institutional catalog", async () => {
     expect(() => importHistoricalOhlcv({ dataset_id: "real", dataset_version: "v1", symbol: "SPY", exchange: "NYSE", asset_type: "etf", timeframe: "1d", source: "provider export", creation_timestamp: "2026-01-01T00:00:00.000Z", raw: "timestamp,open,high,low,close,volume\n2026-01-01,1,2,0.5,1.5,9" })).toThrow("UTC");
-    expect(await new DatasetLibrary("datasets").list()).toHaveLength(0);
-    await expect(new DatasetLibrary("datasets").get("missing")).rejects.toThrow("unknown institutional dataset");
+    const root = await mkdtemp(join(tmpdir(), "atc-empty-datasets-"));
+    try {
+      expect(await new DatasetLibrary(root).list()).toHaveLength(0);
+      await expect(new DatasetLibrary(root).get("missing")).rejects.toThrow("unknown institutional dataset");
+    } finally { await rm(root, { recursive: true, force: true }); }
   });
 });
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";

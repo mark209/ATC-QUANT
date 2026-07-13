@@ -15,7 +15,10 @@
     "generate-replay-datasets": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/generateReplayDatasetMatrix.ts",
     "replay-matrix": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/runReplayMatrix.ts",
     "datasets": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/listDatasets.ts",
-    "validate-datasets": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/validateDatasets.ts"
+    "validate-datasets": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/validateDatasets.ts",
+    "import-dataset": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/importDataset.ts",
+    "replay-all": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/replayAll.ts",
+    "research-report": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/researchReport.ts"
   },
   "dependencies": {
     "@next/eslint-plugin-next": "^15.3.3",

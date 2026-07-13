@@ -263,6 +263,18 @@ export class DatasetLibrary {
     return { reports, coverage };
   }
   async writeCatalog(catalog: DatasetCatalog): Promise<void> { await mkdir(this.root, { recursive: true }); await writeFile(this.catalogPath(), canonicalJson(catalog), "utf8"); }
+  async register(dataset: InstitutionalFrozenDataset): Promise<DatasetCatalogEntry> {
+    const catalog = await this.catalog();
+    if (catalog.datasets.some((entry) => entry.metadata.dataset_id === dataset.dataset_id)) throw new Error(`dataset already registered: ${dataset.dataset_id}`);
+    const relativePath = join(dataset.symbol, dataset.timeframe, `${dataset.dataset_version}.json`);
+    const absolutePath = join(this.root, relativePath);
+    await mkdir(join(this.root, dataset.symbol, dataset.timeframe), { recursive: true });
+    await writeFile(absolutePath, canonicalJson(dataset), { encoding: "utf8", flag: "wx" });
+    const metadata: InstitutionalDatasetMetadata = { dataset_id: dataset.dataset_id, dataset_version: dataset.dataset_version, symbol: dataset.symbol, exchange: dataset.exchange, asset_type: dataset.asset_type, timeframe: dataset.timeframe, source: dataset.source, timezone: "UTC", start_date: dataset.start_date, end_date: dataset.end_date, candle_count: dataset.candle_count, schema_version: DATASET_LIBRARY_SCHEMA_VERSION, checksum: dataset.dataset_hash, creation_timestamp: dataset.creation_timestamp, quality_status: "VALID", synthetic: false };
+    const entry = { metadata, path: relativePath };
+    await this.writeCatalog({ ...catalog, datasets: [...catalog.datasets, entry] });
+    return entry;
+  }
   async writeReports(result: { reports: readonly DatasetQualityReport[]; coverage: readonly DatasetCoverageReport[] }): Promise<void> { await mkdir(this.root, { recursive: true }); await writeFile(join(this.root, "validation-report.json"), canonicalJson(result.reports), "utf8"); await writeFile(join(this.root, "coverage-report.json"), canonicalJson(compareCoverageReports(result.coverage)), "utf8"); }
   async discoverJsonDatasets(): Promise<string[]> { try { return (await readdir(this.root)).filter((name) => name.endsWith(".json") && !name.includes("catalog") && !name.includes("report")); } catch { return []; } }
 }
