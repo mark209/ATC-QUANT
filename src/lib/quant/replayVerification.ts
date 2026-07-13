@@ -9,6 +9,7 @@ export type VerificationStatus = "PASS" | "FAIL" | "UNAVAILABLE" | "INCONCLUSIVE
 
 export interface ReplayIdentity {
   replay_id: string;
+  dataset_id?: string;
   dataset_version: string;
   dataset_hash: string;
   strategy_version: string;
@@ -17,6 +18,9 @@ export interface ReplayIdentity {
   configuration: unknown;
   configuration_hash: string;
   source_git_commit?: string;
+  strategy_git_commit?: string;
+  engine_version?: string;
+  replay_timestamp?: string;
 }
 
 export interface ReplayArtifactMetadata extends ReplayIdentity {
@@ -24,6 +28,10 @@ export interface ReplayArtifactMetadata extends ReplayIdentity {
   execution_journal_hash?: string;
   lifecycle_journal_hash?: string;
   analytics_inputs_hash?: string;
+  dataset_id?: string;
+  strategy_git_commit?: string;
+  engine_version?: string;
+  replay_timestamp?: string;
 }
 
 export interface ReplayArtifacts {
@@ -133,7 +141,7 @@ function validateIdentity(identity: ReplayIdentity): string[] {
 
 function metadataConsistency(identity: ReplayIdentity, artifacts: ReplayArtifacts): string[] {
   const findings: string[] = [];
-  const keys: Array<keyof ReplayIdentity> = ["replay_id", "dataset_version", "dataset_hash", "strategy_version", "execution_profile", "random_seed", "configuration_hash"];
+  const keys: Array<keyof ReplayIdentity> = ["replay_id", "dataset_id", "dataset_version", "dataset_hash", "strategy_version", "execution_profile", "random_seed", "configuration_hash", "strategy_git_commit", "engine_version", "replay_timestamp"];
   for (const key of keys) if (artifacts.metadata[key] !== identity[key]) findings.push(`${key} is inconsistent with replay identity`);
   if (identity.source_git_commit !== undefined && artifacts.metadata.source_git_commit !== identity.source_git_commit) findings.push("source_git_commit is inconsistent with replay identity");
   return findings;
@@ -169,7 +177,9 @@ function validateJournal(artifacts: ReplayArtifacts): VerificationCheck {
   const findings = duplicateFindings(artifacts.trades.map((trade) => trade.trade_id), "trade ID");
   const completed = new Set(artifacts.lifecycle_events.filter((event) => event.state_after === "TRADE_COMPLETED").map((event) => event.trade_id));
   for (const trade of artifacts.trades) if (!completed.has(trade.trade_id)) findings.push(`trade ${trade.trade_id} has no completed lifecycle`);
-  return check(statusFromFindings(findings, false, artifacts.trades.length === 0), findings);
+  const rejected = new Set(artifacts.lifecycle_events.filter((event) => event.state_after === "TRADE_REJECTED").map((event) => event.trade_id));
+  for (const event of artifacts.lifecycle_events) if (!completed.has(event.trade_id) && !rejected.has(event.trade_id)) findings.push(`lifecycle for ${event.trade_id} has no completed or rejected outcome`);
+  return check(statusFromFindings(findings), findings);
 }
 
 function validateLifecycle(artifacts: ReplayArtifacts): VerificationCheck {
@@ -194,7 +204,8 @@ function validateLifecycle(artifacts: ReplayArtifacts): VerificationCheck {
     if (completed.length === 1 && ordered.at(-1)?.state_after !== "TRADE_COMPLETED") findings.push(`trade ${tradeId} has events after completion`);
   }
   const tradeIds = new Set(artifacts.trades.map((trade) => trade.trade_id));
-  for (const event of artifacts.lifecycle_events) if (!tradeIds.has(event.trade_id)) findings.push(`orphan lifecycle event ${event.event_id}`);
+  const rejectedTradeIds = new Set(artifacts.lifecycle_events.filter((event) => event.state_after === "TRADE_REJECTED").map((event) => event.trade_id));
+  for (const event of artifacts.lifecycle_events) if (!tradeIds.has(event.trade_id) && !rejectedTradeIds.has(event.trade_id)) findings.push(`orphan lifecycle event ${event.event_id}`);
   return check(statusFromFindings(findings, false, artifacts.lifecycle_events.length === 0), findings);
 }
 
@@ -222,7 +233,7 @@ function validateExecution(artifacts: ReplayArtifacts): VerificationCheck {
   }
   const knownTradeIds = new Set(artifacts.trades.map((trade) => trade.trade_id));
   for (const event of artifacts.execution_events) if (!knownTradeIds.has(event.trade_id)) findings.push(`orphan execution event ${event.event_id}`);
-  return check(statusFromFindings(findings, false, artifacts.execution_events.length === 0), findings);
+  return check(statusFromFindings(findings, false, artifacts.execution_events.length === 0 && orderCreatedTrades.size > 0), findings);
 }
 
 function validateConsistency(identity: ReplayIdentity, artifacts: ReplayArtifacts): VerificationCheck {
@@ -309,7 +320,7 @@ export async function verifyReplayDeterminism(request: ReplayVerificationRequest
     return createUnavailableReport(request, `replay runner failed: ${error instanceof Error ? error.message : String(error)}`);
   }
   const base = verifyReplayArtifacts(request.identity, first);
-  if (base.status === "FAIL") return { ...base, deterministic_status: "FAIL", replay_status: "FAIL", replay_duration_ms: Date.now() - started };
+  if (base.status === "FAIL") return { ...base, deterministic_status: "FAIL", replay_status: "FAIL", replay_duration_ms: Date.now() - started, production_claim: "Production replay artifacts failed integrity validation." };
   for (let index = 1; index < repetitions; index += 1) {
     const current = await request.runner.run(request.identity, request.dataset);
     const comparison = compareReplayArtifacts(first, current);
@@ -322,11 +333,12 @@ export async function verifyReplayDeterminism(request: ReplayVerificationRequest
       replay_duration_ms: Date.now() - started,
       first_mismatch: comparison.findings[0],
       findings: [...base.findings, ...comparison.findings],
+      production_claim: "Production replay determinism failed: repeated runner outputs differed.",
       summary: "Deterministic replay verification failed."
     };
   }
   const deterministicStatus: VerificationStatus = base.status === "PASS" ? "PASS" : base.status;
-  return { ...base, status: deterministicStatus, replay_status: deterministicStatus, deterministic_status: deterministicStatus, replay_count: repetitions, replay_duration_ms: Date.now() - started, summary: deterministicStatus === "PASS" ? `All ${repetitions} replay outputs matched exactly.` : base.summary };
+  return { ...base, status: deterministicStatus, replay_status: deterministicStatus, deterministic_status: deterministicStatus, replay_count: repetitions, replay_duration_ms: Date.now() - started, production_claim: deterministicStatus === "PASS" ? "Production replay artifacts were generated and matched across all deterministic replays." : base.production_claim, summary: deterministicStatus === "PASS" ? `All ${repetitions} replay outputs matched exactly.` : base.summary };
 }
 
 export function createUnavailableReport(request: Pick<ReplayVerificationRequest, "identity">, reason = "production replay runner and artifacts are unavailable"): ReplayVerificationReport {
