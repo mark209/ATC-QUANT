@@ -7,7 +7,9 @@
     "build": "next build",
     "lint": "next lint",
     "test": "vitest run --config vitest.config.mjs",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "replay": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/runReplay.ts",
+    "verify-replay": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/verifyReplay.ts"
   },
   "dependencies": {
     "@next/eslint-plugin-next": "^15.3.3",
