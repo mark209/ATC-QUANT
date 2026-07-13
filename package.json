@@ -20,7 +20,8 @@
     "replay-all": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/replayAll.ts",
     "research-report": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/researchReport.ts",
     "analyze": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/runAnalyze.ts",
-    "analyze-all": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/runAnalyzeAll.ts"
+    "analyze-all": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/runAnalyzeAll.ts",
+    "crypto-research": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/runCryptoResearch.ts"
   },
   "dependencies": {
     "@next/eslint-plugin-next": "^15.3.3",
