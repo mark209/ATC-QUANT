@@ -23,7 +23,9 @@
     "analyze-all": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/runAnalyzeAll.ts",
     "crypto-research": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/runCryptoResearch.ts",
     "crypto-long-horizon": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/runCryptoLongHorizon.ts",
-    "pipeline-audit": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/runPipelineAudit.ts"
+    "pipeline-audit": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/runPipelineAudit.ts",
+    "proposal-audit": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/runProposalFunnelAudit.ts",
+    "consistency-audit": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/runPipelineConsistencyAudit.ts"
   },
   "dependencies": {
     "@next/eslint-plugin-next": "^15.3.3",
