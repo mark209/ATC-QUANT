@@ -119,6 +119,7 @@ export class DeterministicReplayRunner {
         continue;
       }
       if (!open) {
+        clockTimestamp = new Date(current.timestamp).toISOString();
         const tradeId = uuidFrom(`${identity.replay_id}:${dataset.dataset_hash}:${current.timestamp}`);
         const quantity = Math.max(1, Math.floor((100_000 * analysis.positionSizing.finalAllocation) / current.open));
         const proposal: TradeProposal = {
