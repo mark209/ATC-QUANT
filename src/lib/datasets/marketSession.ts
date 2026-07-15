@@ -115,9 +115,9 @@ function easterSunday(year: number): string {
 export function usExchangeHolidays(year: number): Set<string> {
   const easter = new Date(`${easterSunday(year)}T12:00:00.000Z`);
   easter.setUTCDate(easter.getUTCDate() - 2);
-  return new Set([
+  const holidays = [
     observedFixedHoliday(year, 1, 1),
-    nthWeekday(year, 1, 1, 3),
+    ...(year >= 1998 ? [nthWeekday(year, 1, 1, 3)] : []),
     nthWeekday(year, 2, 1, 3),
     easter.toISOString().slice(0, 10),
     lastWeekday(year, 5, 1),
@@ -126,7 +126,19 @@ export function usExchangeHolidays(year: number): Set<string> {
     nthWeekday(year, 9, 1, 1),
     nthWeekday(year, 11, 4, 4),
     observedFixedHoliday(year, 12, 25)
-  ]);
+  ];
+  // One-off NYSE closures that are part of the historical exchange calendar.
+  const exceptionalClosures: Record<number, string[]> = {
+    1985: ["1985-09-27"],
+    1994: ["1994-04-27"],
+    2001: ["2001-09-11", "2001-09-12", "2001-09-13", "2001-09-14"],
+    2004: ["2004-06-11"],
+    2007: ["2007-01-02"],
+    2012: ["2012-10-29", "2012-10-30"],
+    2018: ["2018-12-05"],
+    2025: ["2025-01-09"]
+  };
+  return new Set([...holidays, ...(exceptionalClosures[year] ?? [])]);
 }
 
 function isUsHoliday(date: string): boolean { return usExchangeHolidays(Number(date.slice(0, 4))).has(date); }

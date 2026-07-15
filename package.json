@@ -26,7 +26,9 @@
     "pipeline-audit": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/runPipelineAudit.ts",
     "proposal-audit": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/runProposalFunnelAudit.ts",
     "consistency-audit": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/runPipelineConsistencyAudit.ts",
-    "profile-replay": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/profileReplay.ts"
+    "profile-replay": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/profileReplay.ts",
+    "profile-verification": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/profileVerification.ts",
+    "equities-research": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/runEquitiesValidation.ts"
   },
   "dependencies": {
     "@next/eslint-plugin-next": "^15.3.3",
