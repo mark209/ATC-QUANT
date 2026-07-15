@@ -12,7 +12,8 @@ import type { ReplayArtifacts, ReplayIdentity } from "@/lib/quant/replayVerifica
 import { calculateHash } from "@/lib/quant/replayVerification";
 import { createDatasetManifest, validateFrozenDataset, type FrozenDataset } from "./frozenDataset";
 import { buildAnalyticsSnapshot, buildArtifactManifest, ReplayArtifactStore, type ReplayArtifactBundle, type ReplayManifest, type ReplayReportArtifact } from "./replayArtifacts";
-import { generateDecisionPipelineDiagnostics } from "./decisionPipelineDiagnostics";
+import { generateDecisionPipelineDiagnostics, snapshotDecisionPipeline, type DecisionPipelineObservation } from "./decisionPipelineDiagnostics";
+import { createTrendBacktestCache } from "@/lib/quant/backtest";
 
 export const REPLAY_ENGINE_VERSION = "phase3-replay-1";
 
@@ -90,13 +91,16 @@ export class DeterministicReplayRunner {
     const trades: TradeRecord[] = [];
     const executionEvents: ExecutionEvent[] = [];
     const decisions: Array<{ timestamp: string; eligible: boolean; allocation: number; label: string }> = [];
+    const observations: DecisionPipelineObservation[] = [];
+    const backtestCache = createTrendBacktestCache(dataset.candles);
     let open: { lifecycle: TradeLifecycleEngine; lifecycleRepository: MemoryLifecycleRepository; tradeRepository: MemoryTradeRepository; trade_id: string; quantity: number; timestamp: string } | null = null;
     let clockTimestamp = identity.replay_timestamp;
 
     for (let index = 60; index < dataset.candles.length; index += 1) {
       const current = dataset.candles[index];
       const history = dataset.candles.slice(0, index);
-      const analysis = analyzeMarketData(history, this.options.asset_type, dataset.symbol, this.options.risk_profile);
+      const analysis = analyzeMarketData(history, this.options.asset_type, dataset.symbol, this.options.risk_profile, backtestCache);
+      observations.push({ timestamp: new Date(current.timestamp).toISOString(), analysis: snapshotDecisionPipeline(analysis) });
       const eligible = isEligible(analysis);
       decisions.push({ timestamp: new Date(current.timestamp).toISOString(), eligible, allocation: analysis.positionSizing.finalAllocation, label: analysis.pipeline.finalDecision.decisionLabel });
       if (open && !eligible) {
@@ -119,6 +123,7 @@ export class DeterministicReplayRunner {
         continue;
       }
       if (!open) {
+        clockTimestamp = new Date(current.timestamp).toISOString();
         const tradeId = uuidFrom(`${identity.replay_id}:${dataset.dataset_hash}:${current.timestamp}`);
         const quantity = Math.max(1, Math.floor((100_000 * analysis.positionSizing.finalAllocation) / current.open));
         const proposal: TradeProposal = {
@@ -181,7 +186,7 @@ export class DeterministicReplayRunner {
     const replayManifest: ReplayManifest = Object.freeze({ ...identity, artifact_schema_version: "1.0" });
     const replayReport: ReplayReportArtifact = Object.freeze({ replay_id: identity.replay_id, dataset_id: dataset.dataset_id, dataset_hash: dataset.dataset_hash, strategy_version: identity.strategy_version, execution_profile: identity.execution_profile, decision_count: decisions.length, trade_count: trades.length, execution_event_count: executionEvents.length, lifecycle_event_count: lifecycleEvents.length, generated_at: identity.replay_timestamp, status: "COMPLETED" });
     const artifactManifest = buildArtifactManifest({ replay_manifest: replayManifest, execution_events: executionEvents, lifecycle_events: lifecycleEvents, trades, analytics, replay_report: replayReport });
-    const diagnostics = generateDecisionPipelineDiagnostics({ replayId: identity.replay_id, generatedAt: identity.replay_timestamp, dataset, assetType: this.options.asset_type, riskProfile: this.options.risk_profile, executionEvents, lifecycleEvents, trades });
+    const diagnostics = generateDecisionPipelineDiagnostics({ replayId: identity.replay_id, generatedAt: identity.replay_timestamp, dataset, assetType: this.options.asset_type, riskProfile: this.options.risk_profile, executionEvents, lifecycleEvents, trades, observations });
     const bundle: ReplayArtifactBundle = { replay_manifest: replayManifest, dataset_manifest: createDatasetManifest(dataset), dataset, artifacts: { metadata: { ...identity, journal_hash: artifactManifest.trade_journal_hash, execution_journal_hash: artifactManifest.execution_journal_hash, lifecycle_journal_hash: artifactManifest.lifecycle_journal_hash, analytics_inputs_hash: artifactManifest.analytics_hash }, trades, execution_events: executionEvents, lifecycle_events: lifecycleEvents, analytics_inputs: analytics, replay_output: replayReport }, analytics, replay_report: replayReport, artifact_manifest: artifactManifest, diagnostics };
     if (persist) await this.artifactStore.write(bundle);
     return bundle;

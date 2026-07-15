@@ -9,6 +9,7 @@ import { annualizedVolatility } from "@/lib/quant/volatility";
 import { canonicalJson } from "@/lib/trading/tradeJournal";
 import { calculateHash } from "@/lib/quant/replayVerification";
 import { createFrozenDataset, validateFrozenDataset, type FrozenDataset } from "@/lib/replay/frozenDataset";
+import { resolveSessionModel, sessionModelForAssetType, validateSessionProgression, type AssetClass, type SessionValidationReport, type SessionType } from "@/lib/datasets/marketSession";
 
 export const DATASET_LIBRARY_SCHEMA_VERSION = "1.0";
 export const DATASET_LIBRARY_ROOT = "datasets";
@@ -21,7 +22,7 @@ export interface InstitutionalDatasetMetadata {
   asset_type: AssetType;
   timeframe: string;
   source: string;
-  timezone: "UTC";
+  timezone: string;
   start_date: string;
   end_date: string;
   candle_count: number;
@@ -30,6 +31,12 @@ export interface InstitutionalDatasetMetadata {
   creation_timestamp: string;
   quality_status: "VALID";
   synthetic: false;
+  asset_class?: AssetClass;
+  trading_calendar?: string;
+  calendar?: string;
+  session_type?: SessionType;
+  session_model?: SessionType;
+  expected_session_frequency?: string;
 }
 
 export interface InstitutionalFrozenDataset extends FrozenDataset {
@@ -39,6 +46,11 @@ export interface InstitutionalFrozenDataset extends FrozenDataset {
   end_date: string;
   quality_status: "VALID";
   synthetic: false;
+  asset_class?: AssetClass;
+  trading_calendar?: string;
+  session_type?: SessionType;
+  session_model?: SessionType;
+  expected_session_frequency?: string;
 }
 
 export interface DatasetCatalogEntry {
@@ -63,6 +75,7 @@ export interface DatasetQualityReport {
   invalid_volume: number;
   timezone_errors: number;
   checksum_valid: boolean;
+  session_validation?: SessionValidationReport;
 }
 
 export interface DatasetCoverageReport {
@@ -101,12 +114,12 @@ export interface HistoricalImportInput {
   source: string;
   creation_timestamp: string;
   raw: string;
-}
-
-function timeframeMilliseconds(timeframe: string): number | null {
-  const match = /^(\d+)(m|h|d)$/.exec(timeframe);
-  if (!match) return null;
-  return Number(match[1]) * (match[2] === "m" ? 60_000 : match[2] === "h" ? 3_600_000 : 86_400_000);
+  timezone?: string;
+  asset_class?: AssetClass;
+  trading_calendar?: string;
+  session_type?: SessionType;
+  session_model?: SessionType;
+  expected_session_frequency?: string;
 }
 
 function parseTimestamp(value: unknown): number {
@@ -172,7 +185,9 @@ export function importHistoricalOhlcv(input: HistoricalImportInput): HistoricalI
 export function freezeInstitutionalDataset(input: HistoricalImportInput, imported: HistoricalImportResult): InstitutionalFrozenDataset {
   if (imported.candles.length === 0) throw new Error("cannot freeze an empty historical dataset");
   if (!input.source || !input.exchange || input.source.toLowerCase().includes("synthetic") || input.source.toLowerCase().includes("fixture")) throw new Error("institutional snapshots require a real source and cannot be synthetic fixtures");
-  const base = createFrozenDataset({ dataset_id: input.dataset_id, dataset_version: input.dataset_version, source: input.source, symbol: input.symbol, timeframe: input.timeframe, timezone: "UTC", candles: imported.candles, creation_timestamp: input.creation_timestamp, exchange: input.exchange, asset_type: input.asset_type, start_date: new Date(imported.candles[0].timestamp).toISOString().slice(0, 10), end_date: new Date(imported.candles.at(-1)!.timestamp).toISOString().slice(0, 10), quality_status: "VALID", synthetic: false } as never);
+  const inferredSession = sessionModelForAssetType(input.asset_type, input.exchange);
+  const session = { ...inferredSession, exchange: input.exchange, timezone: input.timezone ?? inferredSession.timezone, asset_class: input.asset_class ?? inferredSession.asset_class, trading_calendar: input.trading_calendar ?? inferredSession.trading_calendar, session_type: input.session_type ?? inferredSession.session_type, session_model: input.session_model ?? input.session_type ?? inferredSession.session_type, expected_session_frequency: input.expected_session_frequency ?? inferredSession.expected_session_frequency };
+  const base = createFrozenDataset({ dataset_id: input.dataset_id, dataset_version: input.dataset_version, source: input.source, symbol: input.symbol, timeframe: input.timeframe, candles: imported.candles, creation_timestamp: input.creation_timestamp, asset_type: input.asset_type, ...session, start_date: new Date(imported.candles[0].timestamp).toISOString().slice(0, 10), end_date: new Date(imported.candles.at(-1)!.timestamp).toISOString().slice(0, 10), quality_status: "VALID", synthetic: false } as never);
   return { ...base, exchange: input.exchange, asset_type: input.asset_type, start_date: base.candles[0].date, end_date: base.candles.at(-1)!.date, quality_status: "VALID", synthetic: false } as InstitutionalFrozenDataset;
 }
 
@@ -186,30 +201,28 @@ export function validateInstitutionalDataset(dataset: InstitutionalFrozenDataset
   let invalidVolume = 0;
   let timezoneErrors = 0;
   let previous = 0;
-  const step = timeframeMilliseconds(dataset.timeframe);
   const seen = new Set<number>();
   for (const candle of dataset.candles) {
     if (seen.has(candle.timestamp)) duplicate += 1;
     seen.add(candle.timestamp);
     if (candle.timestamp < previous) unordered += 1;
-    if (step !== null && previous > 0) {
-      const gap = candle.timestamp - previous;
-      if (gap !== step) missing += 1;
-    }
     if (![candle.open, candle.high, candle.low, candle.close].every(Number.isFinite) || candle.high < Math.max(candle.open, candle.close) || candle.low > Math.min(candle.open, candle.close) || candle.low > candle.high) invalidOhlc += 1;
     if (!Number.isFinite(candle.volume) || candle.volume <= 0) invalidVolume += 1;
     if (new Date(candle.timestamp).toISOString().slice(0, 10) !== candle.date) timezoneErrors += 1;
     previous = candle.timestamp;
   }
+  const sessionValidation = validateSessionProgression(dataset.candles, resolveSessionModel(dataset));
+  missing = sessionValidation.unexpected_missing_sessions;
   try { validateFrozenDataset(dataset); } catch (error) { errors.push(error instanceof Error ? error.message : String(error)); }
   if (duplicate > 0) errors.push(`duplicate candles: ${duplicate}`);
   if (unordered > 0) errors.push(`unordered candles: ${unordered}`);
   if (invalidOhlc > 0) errors.push(`invalid OHLC candles: ${invalidOhlc}`);
   if (invalidVolume > 0) errors.push(`invalid volume candles: ${invalidVolume}`);
   if (timezoneErrors > 0) errors.push(`timezone/date consistency errors: ${timezoneErrors}`);
-  if (missing > 0) warnings.push(`missing or irregular timestamp intervals: ${missing}`);
+  if (sessionValidation.accepted_gaps > 0) warnings.push(`accepted session gaps: ${sessionValidation.accepted_gaps}`);
+  if (missing > 0) warnings.push(`unexpected missing sessions: ${missing}`);
   const checksumValid = errors.every((error) => !error.includes("dataset_hash"));
-  return { dataset_id: dataset.dataset_id, valid: errors.length === 0 && checksumValid, errors, warnings, duplicate_candles: duplicate, missing_timestamps: missing, unordered_candles: unordered, invalid_ohlc: invalidOhlc, invalid_volume: invalidVolume, timezone_errors: timezoneErrors, checksum_valid: checksumValid };
+  return { dataset_id: dataset.dataset_id, valid: errors.length === 0 && checksumValid, errors, warnings, duplicate_candles: duplicate, missing_timestamps: missing, unordered_candles: unordered, invalid_ohlc: invalidOhlc, invalid_volume: invalidVolume, timezone_errors: timezoneErrors, checksum_valid: checksumValid, session_validation: sessionValidation };
 }
 
 export function buildCoverageReport(dataset: InstitutionalFrozenDataset, warmupRequired = 60): DatasetCoverageReport {
@@ -270,11 +283,20 @@ export class DatasetLibrary {
     const absolutePath = join(this.root, relativePath);
     await mkdir(join(this.root, dataset.symbol, dataset.timeframe), { recursive: true });
     await writeFile(absolutePath, canonicalJson(dataset), { encoding: "utf8", flag: "wx" });
-    const metadata: InstitutionalDatasetMetadata = { dataset_id: dataset.dataset_id, dataset_version: dataset.dataset_version, symbol: dataset.symbol, exchange: dataset.exchange, asset_type: dataset.asset_type, timeframe: dataset.timeframe, source: dataset.source, timezone: "UTC", start_date: dataset.start_date, end_date: dataset.end_date, candle_count: dataset.candle_count, schema_version: DATASET_LIBRARY_SCHEMA_VERSION, checksum: dataset.dataset_hash, creation_timestamp: dataset.creation_timestamp, quality_status: "VALID", synthetic: false };
+    const metadata: InstitutionalDatasetMetadata = { dataset_id: dataset.dataset_id, dataset_version: dataset.dataset_version, symbol: dataset.symbol, exchange: dataset.exchange, asset_type: dataset.asset_type, timeframe: dataset.timeframe, source: dataset.source, timezone: dataset.timezone, start_date: dataset.start_date, end_date: dataset.end_date, candle_count: dataset.candle_count, schema_version: DATASET_LIBRARY_SCHEMA_VERSION, checksum: dataset.dataset_hash, creation_timestamp: dataset.creation_timestamp, quality_status: "VALID", synthetic: false, asset_class: dataset.asset_class, trading_calendar: dataset.trading_calendar, calendar: dataset.calendar, session_type: dataset.session_type, session_model: dataset.session_model, expected_session_frequency: dataset.expected_session_frequency };
     const entry = { metadata, path: relativePath };
     await this.writeCatalog({ ...catalog, datasets: [...catalog.datasets, entry] });
     return entry;
   }
-  async writeReports(result: { reports: readonly DatasetQualityReport[]; coverage: readonly DatasetCoverageReport[] }): Promise<void> { await mkdir(this.root, { recursive: true }); await writeFile(join(this.root, "validation-report.json"), canonicalJson(result.reports), "utf8"); await writeFile(join(this.root, "coverage-report.json"), canonicalJson(compareCoverageReports(result.coverage)), "utf8"); }
+  async writeReports(result: { reports: readonly DatasetQualityReport[]; coverage: readonly DatasetCoverageReport[] }): Promise<void> {
+    await mkdir(this.root, { recursive: true });
+    await writeFile(join(this.root, "validation-report.json"), canonicalJson(result.reports), "utf8");
+    await writeFile(join(this.root, "coverage-report.json"), canonicalJson(compareCoverageReports(result.coverage)), "utf8");
+    const sessionRows = result.reports.map((report) => {
+      const session = report.session_validation;
+      return session ? `| ${report.dataset_id} | ${session.session_model.session_type} | ${session.accepted_gaps} | ${session.weekend_gaps} | ${session.holiday_gaps} | ${session.rejected_gaps} | ${session.out_of_session_bars} | ${report.valid ? "VALID" : "INVALID"} |` : `| ${report.dataset_id} | legacy/inferred | n/a | n/a | n/a | n/a | n/a | ${report.valid ? "VALID" : "INVALID"} |`;
+    });
+    await writeFile("SESSION_VALIDATION_REPORT.md", [`# SESSION_VALIDATION_REPORT`, "", "| Dataset | Session type | Accepted gaps | Weekend gaps | Holiday gaps | Rejected gaps | Out-of-session bars | Status |", "|---|---|---:|---:|---:|---:|---:|---|", ...sessionRows, "", "## Calendar assumptions", "- `CRYPTO_24_7` requires continuous 24-hour progression.", "- `US_EQUITY` uses NYSE/NASDAQ weekday sessions; weekends and recognized US exchange holidays are accepted gaps.", "- `FOREX` and `FUTURES` accept weekends as closures but reject unexpected weekday gaps until a more specific exchange calendar is declared.", "- No timestamps are changed and no candles are fabricated or interpolated.", ""].join("\n"), "utf8");
+  }
   async discoverJsonDatasets(): Promise<string[]> { try { return (await readdir(this.root)).filter((name) => name.endsWith(".json") && !name.includes("catalog") && !name.includes("report")); } catch { return []; } }
 }

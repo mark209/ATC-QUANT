@@ -86,9 +86,46 @@ export interface DecisionPipelineDiagnostics {
   trade_opportunity_summary: string;
 }
 
+export interface DecisionPipelineSnapshot {
+  pipeline: {
+    signal: { combinedSignalScore: number; reasons: readonly string[]; regimeLabel: string };
+    dataQuality: { passed: boolean };
+    hardFilters: { passed: boolean; blockingReason?: string; warnings: readonly string[] };
+    validation: { validationScore: number; warnings: readonly string[] };
+    risk: { combinedRiskScore: number; drawdownLabel: string; warnings: readonly string[]; liquidityScore: number; liquidityLabel: string };
+    expectedValue: { winRate: number; averageWin: number; averageLoss: number; expectedValueAfterCosts: number; passed: boolean; warnings: readonly string[] };
+    finalDecision: { finalPositionSize: number };
+  };
+  investability: { score: number };
+  positionSizing: { fractionalKellyAllocation: number; finalAllocation: number; warnings: readonly string[]; limitingFactor: string };
+  riskMetrics: { annualizedVolatility: number };
+}
+
+export interface DecisionPipelineObservation {
+  timestamp: string;
+  analysis: DecisionPipelineSnapshot;
+}
+
+export function snapshotDecisionPipeline(analysis: ReturnType<typeof analyzeMarketData>): DecisionPipelineSnapshot {
+  return {
+    pipeline: {
+      signal: { combinedSignalScore: analysis.pipeline.signal.combinedSignalScore, reasons: analysis.pipeline.signal.reasons, regimeLabel: analysis.pipeline.signal.regimeLabel },
+      dataQuality: { passed: analysis.pipeline.dataQuality.passed },
+      hardFilters: { passed: analysis.pipeline.hardFilters.passed, blockingReason: analysis.pipeline.hardFilters.blockingReason, warnings: analysis.pipeline.hardFilters.warnings },
+      validation: { validationScore: analysis.pipeline.validation.validationScore, warnings: analysis.pipeline.validation.warnings },
+      risk: { combinedRiskScore: analysis.pipeline.risk.combinedRiskScore, drawdownLabel: analysis.pipeline.risk.drawdownLabel, warnings: analysis.pipeline.risk.warnings, liquidityScore: analysis.pipeline.risk.liquidityScore, liquidityLabel: analysis.pipeline.risk.liquidityLabel },
+      expectedValue: { winRate: analysis.pipeline.expectedValue.winRate, averageWin: analysis.pipeline.expectedValue.averageWin, averageLoss: analysis.pipeline.expectedValue.averageLoss, expectedValueAfterCosts: analysis.pipeline.expectedValue.expectedValueAfterCosts, passed: analysis.pipeline.expectedValue.passed, warnings: analysis.pipeline.expectedValue.warnings },
+      finalDecision: { finalPositionSize: analysis.pipeline.finalDecision.finalPositionSize }
+    },
+    investability: { score: analysis.investability.score },
+    positionSizing: { fractionalKellyAllocation: analysis.positionSizing.fractionalKellyAllocation, finalAllocation: analysis.positionSizing.finalAllocation, warnings: analysis.positionSizing.warnings, limitingFactor: analysis.positionSizing.limitingFactor },
+    riskMetrics: { annualizedVolatility: analysis.riskMetrics.annualizedVolatility }
+  };
+}
+
 const REJECTION_STAGES: RejectionStage[] = ["signal rejected", "evidence rejected", "risk rejected", "EV rejected", "Kelly rejected", "execution rejected", "lifecycle rejected"];
 
-function firstReason(analysis: ReturnType<typeof analyzeMarketData>, stage: RejectionStage): string {
+function firstReason(analysis: DecisionPipelineSnapshot, stage: RejectionStage): string {
   if (stage === "signal rejected") return analysis.pipeline.signal.reasons[0] ?? "Combined technical signal score did not meet the signal gate.";
   if (stage === "evidence rejected") return analysis.pipeline.hardFilters.blockingReason ?? analysis.pipeline.validation.warnings[0] ?? "Evidence did not qualify the opportunity.";
   if (stage === "risk rejected") return analysis.pipeline.risk.warnings[0] ?? `Risk score ${analysis.pipeline.risk.combinedRiskScore.toFixed(2)} did not meet the risk gate.`;
@@ -97,7 +134,7 @@ function firstReason(analysis: ReturnType<typeof analyzeMarketData>, stage: Reje
   return "Existing replay lifecycle or execution path rejected the proposal.";
 }
 
-function zeroAllocationReason(analysis: ReturnType<typeof analyzeMarketData>): string | null {
+function zeroAllocationReason(analysis: DecisionPipelineSnapshot): string | null {
   if (analysis.positionSizing.finalAllocation > 0) return null;
   return analysis.positionSizing.warnings.join(" ") || `Allocation was zero because ${analysis.positionSizing.limitingFactor} evaluated to zero.`;
 }
@@ -112,15 +149,16 @@ export function generateDecisionPipelineDiagnostics(input: {
   lifecycleEvents: readonly LifecycleEvent[];
   trades: readonly TradeRecord[];
   warmupCandles?: number;
+  observations?: readonly DecisionPipelineObservation[];
 }): DecisionPipelineDiagnostics {
   const warmup = input.warmupCandles ?? 60;
-  const observations: Array<{ timestamp: string; analysis: ReturnType<typeof analyzeMarketData> }> = [];
-  for (let index = warmup; index < input.dataset.candles.length; index += 1) {
-    observations.push({
+  const observations = input.observations ?? Array.from({ length: Math.max(0, input.dataset.candles.length - warmup) }, (_, offset) => {
+    const index = warmup + offset;
+    return {
       timestamp: new Date(input.dataset.candles[index].timestamp).toISOString(),
-      analysis: analyzeMarketData(input.dataset.candles.slice(0, index), input.assetType, input.dataset.symbol, input.riskProfile)
-    });
-  }
+      analysis: snapshotDecisionPipeline(analyzeMarketData(input.dataset.candles.slice(0, index), input.assetType, input.dataset.symbol, input.riskProfile))
+    };
+  });
 
   const rejectionHistogram = Object.fromEntries(REJECTION_STAGES.map((stage) => [stage, 0])) as Record<RejectionStage, number>;
   const rejectionReasons: Record<string, number> = {};

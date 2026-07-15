@@ -11,7 +11,7 @@ This report verifies replay artifacts only. It does not execute or alter trading
 | Replay status | PASS |
 | Deterministic replay | PASS |
 | Replay count | 100 |
-| Replay duration | 62023 ms |
+| Replay duration | 124972 ms |
 | Hash validation | PASS |
 | Journal validation | PASS |
 | Lifecycle validation | PASS |

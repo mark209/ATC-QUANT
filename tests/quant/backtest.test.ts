@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { MarketDataPoint } from "@/types/asset";
-import { runTrendBacktest } from "@/lib/quant/backtest";
+import { createTrendBacktestCache, runTrendBacktest } from "@/lib/quant/backtest";
+import { createBundledResearchDataset } from "@/lib/replay/sampleDataset";
 
 function point(index: number, close: number, open = close): MarketDataPoint {
   return {
@@ -166,5 +167,15 @@ describe("trade-by-trade trend backtest", () => {
     expect(full.trades[0].feesPaid).toBeCloseTo(partial.trades[0].feesPaid * 10, 6);
     expect(full.trades[0].slippagePaid).toBeCloseTo(partial.trades[0].slippagePaid * 10, 6);
     expect(Math.abs(full.trades[0].netPnl)).toBeCloseTo(Math.abs(partial.trades[0].netPnl) * 10, 6);
+  });
+});
+
+describe("deterministic backtest cache", () => {
+  it("returns bit-for-bit identical output to the uncached calculation", () => {
+    const dataset = createBundledResearchDataset();
+    const points = dataset.candles.slice(0, 240);
+    const uncached = runTrendBacktest(points, "stock");
+    const cached = runTrendBacktest(points, "stock", 0.001, 0.001, 50, 200, createTrendBacktestCache(points));
+    expect(cached).toEqual(uncached);
   });
 });

@@ -11,6 +11,7 @@ const STARTING_EQUITY = 100000;
 export interface TrendBacktestOptions {
   allocation?: number;
   assumptionLabel?: string;
+  cache?: TrendBacktestCache;
 }
 
 interface OpenTrade {
@@ -33,13 +34,22 @@ function average(values: number[]): number {
   return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
-function trendSignal(closes: number[], endIndex: number, fastWindow: number, slowWindow: number): boolean {
+function isTrendBacktestCache(value: TrendBacktestOptions | TrendBacktestCache): value is TrendBacktestCache {
+  return "movingSums" in value;
+}
+
+function movingAverage(closes: number[], endIndex: number, window: number, cache?: TrendBacktestCache): number {
+  const cachedSum = cache?.movingSums.get(window)?.[endIndex];
+  if (cachedSum !== undefined) return cachedSum / window;
+  return average(closes.slice(endIndex + 1 - window, endIndex + 1));
+}
+
+function trendSignal(closes: number[], endIndex: number, fastWindow: number, slowWindow: number, cache?: TrendBacktestCache): boolean {
   const length = endIndex + 1;
   if (length < slowWindow) return false;
-  const lookback = closes.slice(0, length);
   const current = closes[endIndex];
-  const fastMa = average(lookback.slice(-fastWindow));
-  const slowMa = average(lookback.slice(-slowWindow));
+  const fastMa = movingAverage(closes, endIndex, fastWindow, cache);
+  const slowMa = movingAverage(closes, endIndex, slowWindow, cache);
   return current >= fastMa && fastMa >= slowMa;
 }
 
@@ -86,6 +96,26 @@ function emptyBacktest(): BacktestSummary {
   };
 }
 
+export interface TrendBacktestCache {
+  readonly movingSums: ReadonlyMap<number, readonly number[]>;
+}
+
+export function createTrendBacktestCache(points: readonly MarketDataPoint[], windows = [20, 50, 100, 150, 200]): TrendBacktestCache {
+  const closes = points.map((point) => point.close);
+  const movingSums = new Map<number, readonly number[]>();
+  for (const window of windows) {
+    const sums: number[] = new Array(closes.length);
+    for (let index = 0; index < closes.length; index += 1) {
+      const start = Math.max(0, index + 1 - window);
+      let sum = 0;
+      for (let valueIndex = start; valueIndex <= index; valueIndex += 1) sum += closes[valueIndex];
+      sums[index] = sum;
+    }
+    movingSums.set(window, Object.freeze(sums));
+  }
+  return Object.freeze({ movingSums });
+}
+
 export function runTrendBacktest(
   points: MarketDataPoint[],
   assetType: AssetType,
@@ -93,8 +123,10 @@ export function runTrendBacktest(
   slippage = 0.001,
   fastWindow = 50,
   slowWindow = 200,
-  options: TrendBacktestOptions = {}
+  optionsOrCache: TrendBacktestOptions | TrendBacktestCache = {}
 ): BacktestSummary {
+  const options = isTrendBacktestCache(optionsOrCache) ? { cache: optionsOrCache } : optionsOrCache;
+  const cache = options.cache;
   const allocation = Math.max(0, Math.min(1, options.allocation ?? 1));
   const assumptionLabel = options.assumptionLabel ?? (allocation === 1 ? "100% signal backtest" : "Allocation-adjusted backtest");
   if (points.length === 0) return { ...emptyBacktest(), assumptionLabel, allocation };
@@ -207,7 +239,7 @@ export function runTrendBacktest(
     }
 
     if (index < points.length - 1) {
-      pendingSignal = trendSignal(closes, index, fastWindow, slowWindow);
+      pendingSignal = trendSignal(closes, index, fastWindow, slowWindow, cache);
     }
   }
 

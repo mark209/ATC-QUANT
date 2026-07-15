@@ -8,12 +8,14 @@ import type {
 } from "@/types/quant";
 import type { QuantConfig } from "./config";
 import { boundedScore } from "./config";
-import { runTrendBacktest } from "./backtest";
+import { runTrendBacktest, type TrendBacktestCache } from "./backtest";
 
 type ValidationRange = "1y" | "3y" | "5y" | "10y" | "max";
 
 interface ValidationOptions {
   validationRange?: ValidationRange;
+  defaultBacktest?: BacktestSummary;
+  cache?: TrendBacktestCache;
 }
 
 function emptyBacktest(assetType: AssetType): BacktestSummary {
@@ -120,7 +122,9 @@ function runParameterSensitivity(
   points: MarketDataPoint[],
   assetType: AssetType,
   config: QuantConfig,
-  range: ValidationRange
+  range: ValidationRange,
+  defaultBacktest?: BacktestSummary,
+  cache?: TrendBacktestCache
 ): ParameterSensitivityResult {
   if (points.length < config.minDataPoints) {
     return {
@@ -143,7 +147,9 @@ function runParameterSensitivity(
   ] as const;
   const testedParameters = parameters.map(([fastWindow, slowWindow]) => ({ fastWindow, slowWindow }));
   const results = testedParameters.map(({ fastWindow, slowWindow }) =>
-    runTrendBacktest(points, assetType, config.feeRate, config.slippageRate, fastWindow, slowWindow)
+    fastWindow === 50 && slowWindow === 200 && defaultBacktest
+      ? defaultBacktest
+      : runTrendBacktest(points, assetType, config.feeRate, config.slippageRate, fastWindow, slowWindow, cache)
   );
   const metrics = results.map((result, index) => {
     const tested = testedParameters[index];
@@ -233,15 +239,26 @@ function classifyEvidence(input: {
   return "No Evidence";
 }
 
+function isBacktestSummary(value: ValidationOptions | BacktestSummary): value is BacktestSummary {
+  return "totalReturn" in value && "equityCurve" in value;
+}
+
 export function validateTrendBacktest(
   points: MarketDataPoint[],
   assetType: AssetType,
   config: QuantConfig,
-  options: ValidationOptions = {}
+  optionsOrBacktest: ValidationOptions | BacktestSummary = {},
+  cache?: TrendBacktestCache
 ): BacktestValidationResult {
   const warnings: string[] = [];
+  const options = isBacktestSummary(optionsOrBacktest)
+    ? { defaultBacktest: optionsOrBacktest, cache }
+    : optionsOrBacktest;
   const validationRange = options.validationRange ?? "5y";
   const validationPoints = selectValidationPoints(points, validationRange);
+  const validationCache = validationPoints.length === points.length ? options.cache : undefined;
+  const defaultBacktest =
+    validationPoints.length === points.length && options.defaultBacktest ? options.defaultBacktest : undefined;
   const minOosTrades = minimumOutOfSampleTrades(validationRange, config);
   const range = {
     validationRange: validationRangeLabel(validationRange),
@@ -280,8 +297,12 @@ export function validateTrendBacktest(
   const outOfSample =
     outOfSamplePoints.length > 1 ? runTrendBacktest(outOfSamplePoints, assetType, config.feeRate, config.slippageRate) : emptyBacktest(assetType);
   const walkForward = runWalkForward(validationPoints, assetType, config);
-  const parameterSensitivity = runParameterSensitivity(validationPoints, assetType, config, validationRange);
-  const fullBacktest = runTrendBacktest(validationPoints, assetType, config.feeRate, config.slippageRate);
+  const fullBacktest =
+    defaultBacktest ??
+    (validationCache
+      ? runTrendBacktest(validationPoints, assetType, config.feeRate, config.slippageRate, 50, 200, validationCache)
+      : runTrendBacktest(validationPoints, assetType, config.feeRate, config.slippageRate));
+  const parameterSensitivity = runParameterSensitivity(validationPoints, assetType, config, validationRange, fullBacktest, validationCache);
   const totalTrades = fullBacktest.totalTrades;
   const outOfSampleLabel = outOfSample.totalTrades === 0 ? "Insufficient Data" : outOfSample.totalTrades < minOosTrades ? "Inconclusive" : "Reliable";
   const unadjustedEquityPrices = hasUnadjustedEquityPrices(validationPoints, assetType);

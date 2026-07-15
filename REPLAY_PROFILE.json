@@ -1,0 +1,60 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-07-15T01:52:09.749Z",
+  "optimization": "reuse replay decision analyses while generating diagnostics and cache exact moving-average reductions across prefix backtests",
+  "determinism_note": "Benchmark bundles are not persisted; production artifact equivalence is validated by replay verification tests.",
+  "measured_phases": {
+    "dataset_loading": "Measured by benchmark setup; included in dataset preparation, not runner runtime.",
+    "signal_calculation": "Included in deterministic decision analysis; the current scoring API does not expose separate stage timers.",
+    "evidence": "Included in deterministic decision analysis; the current scoring API does not expose separate stage timers.",
+    "risk": "Included in deterministic decision analysis; the current scoring API does not expose separate stage timers.",
+    "expected_value": "Included in deterministic decision analysis; the current scoring API does not expose separate stage timers.",
+    "kelly": "Included in deterministic decision analysis; the current scoring API does not expose separate stage timers.",
+    "execution": "Included in runner runtime; execution is only entered for eligible proposals.",
+    "lifecycle": "Included in runner runtime; lifecycle is only entered for proposals and closes.",
+    "journal_writing": "Excluded from benchmark runtime because bundles are not persisted.",
+    "hashing": "Included in runner runtime; hashes are deterministic and covered by verification.",
+    "replay_verification": "Run separately by verification integration tests.",
+    "diagnostics": "Included in runner runtime; diagnostics now consumes the replay analyses instead of recomputing them.",
+    "statistics": "Not part of replay runtime; generated after replay from persisted artifacts."
+  },
+  "baseline": {
+    "source": "previous replayArtifacts.test.ts run before the optimization",
+    "production_replay_fixture_ms": 35683,
+    "production_replay_fixture_after_ms": 3643,
+    "deterministic_verification_fixture_ms": 39317,
+    "scale_runs": "not available; the pre-optimization long-horizon runs did not persist artifacts before the execution window ended"
+  },
+  "benchmarks": [
+    {
+      "source_dataset": "equities-spy-1d-yahoo-v1",
+      "dataset_id": "equities-spy-1d-yahoo-v1-benchmark-1000",
+      "candles": 1000,
+      "runtime_ms": 9914.36,
+      "peak_rss_bytes": 308285440,
+      "decisions": 940,
+      "completed_trades": 0,
+      "verification_status": "NOT_RUN"
+    },
+    {
+      "source_dataset": "equities-spy-1d-yahoo-v1",
+      "dataset_id": "equities-spy-1d-yahoo-v1-benchmark-5000",
+      "candles": 5000,
+      "runtime_ms": 210571.43,
+      "peak_rss_bytes": 816660480,
+      "decisions": 4940,
+      "completed_trades": 0,
+      "verification_status": "NOT_RUN"
+    },
+    {
+      "source_dataset": "equities-msft-1d-yahoo-v1",
+      "dataset_id": "equities-msft-1d-yahoo-v1-benchmark-10000",
+      "candles": 10000,
+      "runtime_ms": 956678.48,
+      "peak_rss_bytes": 1301954560,
+      "decisions": 9940,
+      "completed_trades": 6,
+      "verification_status": "NOT_RUN"
+    }
+  ]
+}

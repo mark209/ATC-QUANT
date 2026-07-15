@@ -170,6 +170,11 @@ describe("replay verification", () => {
     expect(calculateHash({ b: 2, a: 1 })).toBe(calculateHash({ a: 1, b: 2 }));
   });
 
+  it("preserves canonical JSON for nested arrays and objects", () => {
+    const value = { z: [{ beta: 2, alpha: { d: 4, c: 3 } }], a: null, m: true };
+    expect(canonicalSerialize(value)).toBe('{"a":null,"m":true,"z":[{"alpha":{"c":3,"d":4},"beta":2}]}');
+  });
+
   it("passes a complete internally consistent artifact bundle", () => {
     const result = verifyReplayArtifacts(identity, makeArtifacts());
     expect(result.status).toBe("PASS");

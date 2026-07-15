@@ -18,7 +18,17 @@
     "validate-datasets": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/validateDatasets.ts",
     "import-dataset": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/importDataset.ts",
     "replay-all": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/replayAll.ts",
-    "research-report": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/researchReport.ts"
+    "research-report": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/researchReport.ts",
+    "analyze": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/runAnalyze.ts",
+    "analyze-all": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/runAnalyzeAll.ts",
+    "crypto-research": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/runCryptoResearch.ts",
+    "crypto-long-horizon": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/runCryptoLongHorizon.ts",
+    "pipeline-audit": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/runPipelineAudit.ts",
+    "proposal-audit": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/runProposalFunnelAudit.ts",
+    "consistency-audit": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/runPipelineConsistencyAudit.ts",
+    "profile-replay": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/profileReplay.ts",
+    "profile-verification": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/profileVerification.ts",
+    "equities-research": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/runEquitiesValidation.ts"
   },
   "dependencies": {
     "@next/eslint-plugin-next": "^15.3.3",

@@ -10,6 +10,7 @@ import { conditionalValueAtRisk, guardedCalmarRatio, guardedSharpeRatio, guarded
 import { periodsPerYear, volatilityRegime } from "./riskRegime";
 import { annualizedVolatility, ewmaVolatility } from "./volatility";
 import { runTrendBacktest } from "./backtest";
+import type { TrendBacktestCache } from "./backtest";
 import { validateDataQuality } from "./dataQuality";
 import { evaluateHardFilters } from "./hardFilters";
 import { calculateSignalLayer } from "./signalLayer";
@@ -163,14 +164,20 @@ function displayRange(range: string): string {
   return range === "max" ? "Max" : range;
 }
 
+function isTrendBacktestCache(value: AnalysisRangeOptions | TrendBacktestCache): value is TrendBacktestCache {
+  return "movingSums" in value;
+}
+
 export function analyzeMarketData(
   points: MarketDataPoint[],
   assetType: AssetType,
   symbol: string,
   riskProfile: RiskProfile,
-  rangeOptions: AnalysisRangeOptions = {}
+  rangeOptionsOrCache: AnalysisRangeOptions | TrendBacktestCache = {}
 ): QuantAnalysis {
   const config = DEFAULT_QUANT_CONFIG;
+  const rangeOptions = isTrendBacktestCache(rangeOptionsOrCache) ? {} : rangeOptionsOrCache;
+  const backtestCache = isTrendBacktestCache(rangeOptionsOrCache) ? rangeOptionsOrCache : undefined;
   const engineCandles = rangeOptions.engineCandles ?? points;
   const backtestCandles = rangeOptions.backtestCandles ?? engineCandles;
   const validationCandles = rangeOptions.validationCandles ?? backtestCandles;
@@ -187,7 +194,7 @@ export function analyzeMarketData(
   const sortino = guardedSortinoRatio(simpleReturns, annualReturn, 0, periods);
   const calmar = guardedCalmarRatio(annualReturn, drawdown.maxDrawdown);
   const ratioWarnings = [sharpe.warning, sortino.warning, calmar.warning].filter((warning): warning is string => Boolean(warning));
-  const fullBacktest = runTrendBacktest(backtestCandles, assetType, config.feeRate, config.slippageRate);
+  const fullBacktest = runTrendBacktest(backtestCandles, assetType, config.feeRate, config.slippageRate, 50, 200, backtestCache);
   const ev = calculateExpectedValueFromTrades(fullBacktest.trades);
   const metrics: RiskMetrics = {
     annualizedReturn: annualReturn,
@@ -244,7 +251,9 @@ export function analyzeMarketData(
     config
   );
   const validation = validateTrendBacktest(validationCandles, assetType, config, {
-    validationRange: (rangeOptions.rangeMetadata?.validationRangeUsed ?? "max") as "1y" | "3y" | "5y" | "10y" | "max"
+    validationRange: (rangeOptions.rangeMetadata?.validationRangeUsed ?? "max") as "1y" | "3y" | "5y" | "10y" | "max",
+    defaultBacktest: validationCandles === backtestCandles ? fullBacktest : undefined,
+    cache: validationCandles === backtestCandles ? backtestCache : undefined
   });
 
   const trend = calculateTrendScore(prices, assetType);
