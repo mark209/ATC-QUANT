@@ -9,13 +9,34 @@ import { calculateLogReturns } from "./returns";
 import { periodsPerYear } from "./riskRegime";
 import type { AssetType } from "@/types/asset";
 
+export interface TrendBacktestCache {
+  readonly movingSums: ReadonlyMap<number, readonly number[]>;
+}
+
+export function createTrendBacktestCache(points: readonly MarketDataPoint[], windows = [20, 50, 100, 150, 200]): TrendBacktestCache {
+  const closes = points.map((point) => point.close);
+  const movingSums = new Map<number, readonly number[]>();
+  for (const window of windows) {
+    const sums: number[] = new Array(closes.length);
+    for (let index = 0; index < closes.length; index += 1) {
+      const start = Math.max(0, index + 1 - window);
+      let sum = 0;
+      for (let valueIndex = start; valueIndex <= index; valueIndex += 1) sum += closes[valueIndex];
+      sums[index] = sum;
+    }
+    movingSums.set(window, Object.freeze(sums));
+  }
+  return Object.freeze({ movingSums });
+}
+
 export function runTrendBacktest(
   points: MarketDataPoint[],
   assetType: AssetType,
   fees = 0.001,
   slippage = 0.001,
   fastWindow = 50,
-  slowWindow = 200
+  slowWindow = 200,
+  cache?: TrendBacktestCache
 ): BacktestSummary {
   const closes = points.map((point) => point.close);
   const simpleReturns = calculateSimpleReturns(closes);
@@ -34,9 +55,11 @@ export function runTrendBacktest(
   let activeTradeReturn = 0;
 
   const equityCurve = points.slice(1).map((point, index) => {
-    const lookback = closes.slice(0, index + 1);
-    const fastMa = lookback.length >= fastWindow ? lookback.slice(-fastWindow).reduce((sum, value) => sum + value, 0) / fastWindow : closes[index];
-    const slowMa = lookback.length >= slowWindow ? lookback.slice(-slowWindow).reduce((sum, value) => sum + value, 0) / slowWindow : fastMa;
+    const lookbackLength = index + 1;
+    const fastSum = cache?.movingSums.get(fastWindow)?.[index];
+    const slowSum = cache?.movingSums.get(slowWindow)?.[index];
+    const fastMa = lookbackLength >= fastWindow ? (fastSum ?? closes.slice(index + 1 - fastWindow, index + 1).reduce((sum, value) => sum + value, 0)) / fastWindow : closes[index];
+    const slowMa = lookbackLength >= slowWindow ? (slowSum ?? closes.slice(index + 1 - slowWindow, index + 1).reduce((sum, value) => sum + value, 0)) / slowWindow : fastMa;
     const signal = closes[index] >= fastMa && fastMa >= slowMa;
     if (signal !== inMarket) {
       if (inMarket && currentHoldingPeriod > 0) {

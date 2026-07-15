@@ -25,7 +25,8 @@
     "crypto-long-horizon": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/runCryptoLongHorizon.ts",
     "pipeline-audit": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/runPipelineAudit.ts",
     "proposal-audit": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/runProposalFunnelAudit.ts",
-    "consistency-audit": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/runPipelineConsistencyAudit.ts"
+    "consistency-audit": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/runPipelineConsistencyAudit.ts",
+    "profile-replay": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs ./scripts/profileReplay.ts"
   },
   "dependencies": {
     "@next/eslint-plugin-next": "^15.3.3",

@@ -2,7 +2,7 @@ import type { AssetType, MarketDataPoint } from "@/types/asset";
 import type { BacktestSummary, BacktestValidationResult, ParameterSensitivityResult, WalkForwardResult } from "@/types/quant";
 import type { QuantConfig } from "./config";
 import { boundedScore } from "./config";
-import { runTrendBacktest } from "./backtest";
+import { runTrendBacktest, type TrendBacktestCache } from "./backtest";
 
 function emptyBacktest(assetType: AssetType): BacktestSummary {
   return runTrendBacktest([], assetType);
@@ -58,7 +58,7 @@ function runWalkForward(points: MarketDataPoint[], assetType: AssetType, config:
   };
 }
 
-function runParameterSensitivity(points: MarketDataPoint[], assetType: AssetType, config: QuantConfig): ParameterSensitivityResult {
+function runParameterSensitivity(points: MarketDataPoint[], assetType: AssetType, config: QuantConfig, defaultBacktest?: BacktestSummary, cache?: TrendBacktestCache): ParameterSensitivityResult {
   if (points.length < config.minDataPoints) {
     return {
       testedParameters: [],
@@ -75,7 +75,9 @@ function runParameterSensitivity(points: MarketDataPoint[], assetType: AssetType
     [20, 200]
   ] as const;
   const testedParameters = parameters.map(([fastWindow, slowWindow]) => {
-    const stats = runTrendBacktest(points, assetType, config.feeRate, config.slippageRate, fastWindow, slowWindow);
+    const stats = fastWindow === 50 && slowWindow === 200 && defaultBacktest
+      ? defaultBacktest
+      : runTrendBacktest(points, assetType, config.feeRate, config.slippageRate, fastWindow, slowWindow, cache);
     return {
       fastWindow,
       slowWindow,
@@ -101,14 +103,14 @@ function runParameterSensitivity(points: MarketDataPoint[], assetType: AssetType
   };
 }
 
-export function validateTrendBacktest(points: MarketDataPoint[], assetType: AssetType, config: QuantConfig): BacktestValidationResult {
+export function validateTrendBacktest(points: MarketDataPoint[], assetType: AssetType, config: QuantConfig, defaultBacktest?: BacktestSummary, cache?: TrendBacktestCache): BacktestValidationResult {
   const warnings: string[] = [];
   const { inSample: inSamplePoints, outOfSample: outOfSamplePoints } = splitHistory(points);
   const inSample = inSamplePoints.length > 1 ? runTrendBacktest(inSamplePoints, assetType, config.feeRate, config.slippageRate) : emptyBacktest(assetType);
   const outOfSample =
     outOfSamplePoints.length > 1 ? runTrendBacktest(outOfSamplePoints, assetType, config.feeRate, config.slippageRate) : emptyBacktest(assetType);
   const walkForward = runWalkForward(points, assetType, config);
-  const parameterSensitivity = runParameterSensitivity(points, assetType, config);
+  const parameterSensitivity = runParameterSensitivity(points, assetType, config, defaultBacktest, cache);
 
   warnings.push(...walkForward.warnings, ...parameterSensitivity.warnings);
   if (outOfSamplePoints.length < config.minTradeCount) warnings.push("Out-of-sample period is short; validation confidence is limited.");

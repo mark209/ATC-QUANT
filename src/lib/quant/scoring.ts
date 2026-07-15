@@ -10,6 +10,7 @@ import { calmarRatio, conditionalValueAtRisk, sharpeRatio, sortinoRatio, valueAt
 import { periodsPerYear, volatilityRegime } from "./riskRegime";
 import { annualizedVolatility, ewmaVolatility } from "./volatility";
 import { runTrendBacktest } from "./backtest";
+import type { TrendBacktestCache } from "./backtest";
 import { validateDataQuality } from "./dataQuality";
 import { evaluateHardFilters } from "./hardFilters";
 import { calculateSignalLayer } from "./signalLayer";
@@ -119,7 +120,7 @@ function layerResult(input: {
   };
 }
 
-export function analyzeMarketData(points: MarketDataPoint[], assetType: AssetType, symbol: string, riskProfile: RiskProfile): QuantAnalysis {
+export function analyzeMarketData(points: MarketDataPoint[], assetType: AssetType, symbol: string, riskProfile: RiskProfile, backtestCache?: TrendBacktestCache): QuantAnalysis {
   const config = DEFAULT_QUANT_CONFIG;
   const prices = points.map((point) => point.close);
   const simpleReturns = calculateSimpleReturns(prices);
@@ -182,8 +183,8 @@ export function analyzeMarketData(points: MarketDataPoint[], assetType: AssetTyp
     },
     config
   );
-  const validation = validateTrendBacktest(points, assetType, config);
-  const fullBacktest = runTrendBacktest(points, assetType, config.feeRate, config.slippageRate);
+  const fullBacktest = runTrendBacktest(points, assetType, config.feeRate, config.slippageRate, 50, 200, backtestCache);
+  const validation = validateTrendBacktest(points, assetType, config, fullBacktest, backtestCache);
 
   const trend = calculateTrendScore(prices, assetType);
   const momentum = calculateMomentumScore(prices, assetType);
