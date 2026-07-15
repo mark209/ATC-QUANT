@@ -113,7 +113,10 @@ function statusFromFindings(findings: string[], unavailable = false, inconclusiv
 function canonicalize(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonicalize);
   if (value && typeof value === "object") {
-    return Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, nested]) => [key, canonicalize(nested)]));
+    const source = value as Record<string, unknown>;
+    const result: Record<string, unknown> = {};
+    for (const key of Object.keys(source).sort((a, b) => a.localeCompare(b))) result[key] = canonicalize(source[key]);
+    return result;
   }
   return value;
 }
@@ -130,12 +133,25 @@ export function hashJournal(entries: readonly unknown[]): string {
   return calculateHash(entries);
 }
 
-function validateIdentity(identity: ReplayIdentity): string[] {
+type HashMemo = { values: WeakMap<object, string> };
+
+function memoizedHash(value: unknown, memo: HashMemo): string {
+  if (value && typeof value === "object") {
+    const cached = memo.values.get(value);
+    if (cached) return cached;
+    const hash = calculateHash(value);
+    memo.values.set(value, hash);
+    return hash;
+  }
+  return calculateHash(value);
+}
+
+function validateIdentity(identity: ReplayIdentity, memo: HashMemo): string[] {
   const findings: string[] = [];
   for (const [field, value] of Object.entries(identity)) {
     if (field !== "configuration" && typeof value !== "string" || field !== "configuration" && value.trim().length === 0) findings.push(`identity field ${field} is missing`);
   }
-  if (identity.configuration_hash !== calculateHash(identity.configuration)) findings.push("configuration_hash does not match configuration");
+  if (identity.configuration_hash !== memoizedHash(identity.configuration, memo)) findings.push("configuration_hash does not match configuration");
   return findings;
 }
 
@@ -147,9 +163,9 @@ function metadataConsistency(identity: ReplayIdentity, artifacts: ReplayArtifact
   return findings;
 }
 
-function validateHashes(identity: ReplayIdentity, artifacts: ReplayArtifacts): VerificationCheck {
-  const findings = validateIdentity(identity);
-  if (artifacts.metadata.configuration_hash !== calculateHash(identity.configuration)) findings.push("artifact configuration_hash does not match configuration");
+function validateHashes(identity: ReplayIdentity, artifacts: ReplayArtifacts, memo: HashMemo): VerificationCheck {
+  const findings = validateIdentity(identity, memo);
+  if (artifacts.metadata.configuration_hash !== memoizedHash(identity.configuration, memo)) findings.push("artifact configuration_hash does not match configuration");
   if (artifacts.metadata.journal_hash !== undefined && artifacts.metadata.journal_hash !== hashJournal(artifacts.trades)) findings.push("journal_hash does not match trade journal");
   if (artifacts.metadata.execution_journal_hash !== undefined && artifacts.metadata.execution_journal_hash !== hashJournal(artifacts.execution_events)) findings.push("execution_journal_hash does not match execution events");
   if (artifacts.metadata.lifecycle_journal_hash !== undefined && artifacts.metadata.lifecycle_journal_hash !== hashJournal(artifacts.lifecycle_events)) findings.push("lifecycle_journal_hash does not match lifecycle events");
@@ -175,9 +191,13 @@ function duplicateFindings(values: readonly string[], label: string): string[] {
 
 function validateJournal(artifacts: ReplayArtifacts): VerificationCheck {
   const findings = duplicateFindings(artifacts.trades.map((trade) => trade.trade_id), "trade ID");
-  const completed = new Set(artifacts.lifecycle_events.filter((event) => event.state_after === "TRADE_COMPLETED").map((event) => event.trade_id));
+  const completed = new Set<string>();
+  const rejected = new Set<string>();
+  for (const event of artifacts.lifecycle_events) {
+    if (event.state_after === "TRADE_COMPLETED") completed.add(event.trade_id);
+    if (event.state_after === "TRADE_REJECTED") rejected.add(event.trade_id);
+  }
   for (const trade of artifacts.trades) if (!completed.has(trade.trade_id)) findings.push(`trade ${trade.trade_id} has no completed lifecycle`);
-  const rejected = new Set(artifacts.lifecycle_events.filter((event) => event.state_after === "TRADE_REJECTED").map((event) => event.trade_id));
   for (const event of artifacts.lifecycle_events) if (!completed.has(event.trade_id) && !rejected.has(event.trade_id)) findings.push(`lifecycle for ${event.trade_id} has no completed or rejected outcome`);
   return check(statusFromFindings(findings), findings);
 }
@@ -185,7 +205,11 @@ function validateJournal(artifacts: ReplayArtifacts): VerificationCheck {
 function validateLifecycle(artifacts: ReplayArtifacts): VerificationCheck {
   const findings = duplicateFindings(artifacts.lifecycle_events.map((event) => event.event_id), "event ID");
   const grouped = new Map<string, LifecycleEvent[]>();
-  for (const event of artifacts.lifecycle_events) grouped.set(event.trade_id, [...(grouped.get(event.trade_id) ?? []), event]);
+  for (const event of artifacts.lifecycle_events) {
+    const events = grouped.get(event.trade_id);
+    if (events) events.push(event);
+    else grouped.set(event.trade_id, [event]);
+  }
   for (const [tradeId, events] of grouped) {
     const ordered = [...events].sort((a, b) => a.lifecycle_sequence - b.lifecycle_sequence);
     const expectedSequences = Array.from({ length: ordered.length }, (_, index) => index + 1);
@@ -204,7 +228,8 @@ function validateLifecycle(artifacts: ReplayArtifacts): VerificationCheck {
     if (completed.length === 1 && ordered.at(-1)?.state_after !== "TRADE_COMPLETED") findings.push(`trade ${tradeId} has events after completion`);
   }
   const tradeIds = new Set(artifacts.trades.map((trade) => trade.trade_id));
-  const rejectedTradeIds = new Set(artifacts.lifecycle_events.filter((event) => event.state_after === "TRADE_REJECTED").map((event) => event.trade_id));
+  const rejectedTradeIds = new Set<string>();
+  for (const event of artifacts.lifecycle_events) if (event.state_after === "TRADE_REJECTED") rejectedTradeIds.add(event.trade_id);
   for (const event of artifacts.lifecycle_events) if (!tradeIds.has(event.trade_id) && !rejectedTradeIds.has(event.trade_id)) findings.push(`orphan lifecycle event ${event.event_id}`);
   return check(statusFromFindings(findings, false, artifacts.lifecycle_events.length === 0), findings);
 }
@@ -218,7 +243,11 @@ function validateExecution(artifacts: ReplayArtifacts): VerificationCheck {
   }
   const orderCreatedTrades = new Set(artifacts.lifecycle_events.filter((event) => event.state_after === "ORDER_CREATED").map((event) => event.trade_id));
   const grouped = new Map<string, ExecutionEvent[]>();
-  for (const event of artifacts.execution_events) grouped.set(event.trade_id, [...(grouped.get(event.trade_id) ?? []), event]);
+  for (const event of artifacts.execution_events) {
+    const events = grouped.get(event.trade_id);
+    if (events) events.push(event);
+    else grouped.set(event.trade_id, [event]);
+  }
   for (const [tradeId, events] of grouped) {
     const ordered = [...events].sort((a, b) => a.event_sequence - b.event_sequence);
     if (ordered.some((event, index) => event.event_sequence !== index + 1)) findings.push(`execution sequence is not contiguous for ${tradeId}`);
@@ -269,7 +298,8 @@ function combineStatus(checks: readonly VerificationCheck[], inconclusiveWhenEmp
 }
 
 export function verifyReplayArtifacts(identity: ReplayIdentity, artifacts: ReplayArtifacts): ReplayVerificationReport {
-  const hashValidation = validateHashes(identity, artifacts);
+  const hashMemo: HashMemo = { values: new WeakMap<object, string>() };
+  const hashValidation = validateHashes(identity, artifacts, hashMemo);
   const journalValidation = validateJournal(artifacts);
   const lifecycleValidation = validateLifecycle(artifacts);
   const executionValidation = validateExecution(artifacts);
